@@ -125,4 +125,3 @@ You are free to:
 We ask that you:
 - Cite this work in academic publications
 - Respect the academic intent of this software
-

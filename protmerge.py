@@ -242,7 +242,6 @@ def main():
         # Launch GUI
         logger.info("Launching graphical interface...")
         app.run_gui()
-        
         logger.info("ProtMerge session ended")
         
     except KeyboardInterrupt:

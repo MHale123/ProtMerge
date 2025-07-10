@@ -243,7 +243,7 @@ SUPPORTED_EXCEL_FORMATS = [
     ("All files", "*.*")
 ]
 
-# Error messages
+# COMPLETE ERROR MESSAGES - FIXED VERSION
 ERROR_MESSAGES = {
     'file_not_found': "Could not find the specified file",
     'invalid_excel': "File is not a valid Excel format",
@@ -254,7 +254,18 @@ ERROR_MESSAGES = {
     'save_failed': "Could not save results file",
     'similarity_failed': "Similarity analysis encountered an error but main analysis completed",
     'central_protein_not_found': "Central protein ID not found in the dataset",
-    'insufficient_data': "Insufficient data for similarity analysis"
+    'insufficient_data': "Insufficient data for similarity analysis",
+    
+    # MISSING KEYS - NOW ADDED:
+    'FILE_LOAD_ERROR': "Failed to load file",
+    'INVALID_PROTMERGE_FILE': "This doesn't appear to be a ProtMerge results file",
+    'SHEET_NOT_FOUND': "Expected sheet 'ProtMerge_Results' not found",
+    'REQUIRED_COLUMN_MISSING': "Required column 'UniProt ID' not found in results file",
+    'INSUFFICIENT_DATA': "Need at least 2 proteins for similarity analysis",
+    'MODULE_MISSING': "Required module not found",
+    'ANALYSIS_FAILED': "Analysis failed",
+    'FILE_OPEN_ERROR': "Could not open file:",
+    'SIMILARITY_ANALYSIS_FAILED': "Similarity analysis failed"
 }
 
 # Success messages
