@@ -22,7 +22,8 @@ RATE_LIMITS = {
     'protparam': 2.0,
     'blast': 10.0,
     'pdb': 0.5,
-    'similarity': 0.1
+    'similarity': 0.1,
+    'gene_converter': 0.2 
 }
 
 # Default analysis options
@@ -33,11 +34,13 @@ DEFAULT_OPTIONS = {
     'amino_acid': False,
     'pdb_search': False,
     'similarity_analysis': False,
-    'safe_mode': True
+    'safe_mode': True,
+    'use_gene_ids': False 
 }
 
 # Output column mappings - maps internal field names to Excel column headers
 OUTPUT_COLUMNS = {
+    'original_gene_id': 'Original Gene ID',  
     'organism': 'Organism',
     'gene_name': 'Gene Name', 
     'function': 'Protein Function/Notes',

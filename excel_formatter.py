@@ -122,14 +122,25 @@ class ExcelFormatter:
         """Prepare main results data for Excel output"""
         output_df = pd.DataFrame()
         output_df['UniProt ID'] = results['UniProt_ID']
+    
+        # NEW: Add Original Gene ID column if it exists and has data
+        if 'Original_Gene_ID' in results.columns:
+            has_gene_data = results['Original_Gene_ID'].apply(
+                lambda x: pd.notna(x) and str(x).strip() != ''
+            ).any()
         
+            if has_gene_data:
+                output_df['Original Gene ID'] = results['Original_Gene_ID']
+    
         # Add basic output columns that exist in results
         for internal_key, excel_column in OUTPUT_COLUMNS.items():
+            if internal_key == 'original_gene_id':
+                continue  # Already handled above
             if internal_key in results.columns:
                 output_df[excel_column] = results[internal_key]
             else:
                 output_df[excel_column] = "NO VALUE FOUND"
-        
+    
         return output_df
     
     def _create_amino_acid_sheet(self, wb, results):

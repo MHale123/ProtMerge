@@ -34,41 +34,57 @@ class ProtMerge:
         """Run complete analysis pipeline"""
         try:
             self.logger.info(f"Starting analysis for {Path(input_file).name}")
-            
+        
             # Load data
             if progress_callback:
                 progress_callback(0, "Loading data", f"Reading {Path(input_file).name}")
-            
+        
             data = self.data_handler.load_excel_data(
                 input_file, sheet_name, column_index, options.get('safe_mode', True)
             )
-            
+        
             protein_count = len(data['results'])
             self.logger.info(f"Loaded {protein_count} proteins for analysis")
+        
+            # NEW: Check if we need to convert gene IDs to UniProt IDs
+            if options.get('use_gene_ids', False):
+                if progress_callback:
+                    progress_callback(2, "Converting Gene IDs", "Converting gene names to UniProt IDs")
             
-            # Run analyses
+                self.logger.info("Converting gene IDs to UniProt IDs...")
+                data = self.analyzer_manager.run_gene_conversion(data, progress_callback)
+            
+                # Count successful conversions
+                converted_count = sum(1 for _, row in data['results'].iterrows() 
+                                    if row.get('Original_Gene_ID', '') and 
+                                        row.get('UniProt_ID', '') != row.get('Original_Gene_ID', ''))
+            
+                self.logger.info(f"Gene conversion: {converted_count}/{protein_count} successful")
+        
+            # Run analyses (existing code)
             if progress_callback:
-                progress_callback(5, "Running analyses", "Starting protein data collection")
-            
+                start_progress = 10 if options.get('use_gene_ids', False) else 5
+                progress_callback(start_progress, "Running analyses", "Starting protein data collection")
+        
             results = self.analyzer_manager.run_all_analyses(data, options, progress_callback)
-            
+        
             # Calculate analysis summary
             self.analysis_summary = self._calculate_analysis_summary(results, options)
-            
+        
             # Save results
             if progress_callback:
                 progress_callback(98, "Saving results", "Creating Excel file")
-            
+        
             output_file = self.excel_formatter.save_results(input_file, results, options)
-            
+        
             # Log completion summary
             self._log_completion_summary(output_file, results, options)
-            
+        
             if progress_callback:
                 progress_callback(100, "Analysis complete", "Results saved successfully")
-            
+        
             return output_file
-            
+        
         except Exception as e:
             self.logger.error(f"Analysis pipeline failed: {e}")
             raise
@@ -251,6 +267,52 @@ def main():
         print(f"ProtMerge failed to start: {e}")
         logging.error(f"Fatal error: {e}")
         sys.exit(1)
+    
+    def _calculate_smooth_progress(self, raw_progress, main_text, options):
+        """Calculate smooth progress including gene conversion phase"""
+        stage = self._identify_stage(main_text.lower())
+    
+        stage_weights = {}
+        total_weight = 0
+    
+        # Add gene conversion stage if enabled
+        if options.get('use_gene_ids', False):
+            stage_weights['gene_conversion'] = 10
+            total_weight += 10
+    
+        # Existing stages with adjusted weights
+        stage_weights['uniprot'] = 35 if options.get('use_gene_ids', False) else 40
+        total_weight += stage_weights['uniprot']
+    
+        if options.get('protparam', False):
+            stage_weights['protparam'] = 25
+            total_weight += 25
+    
+        if options.get('blast', False):
+            stage_weights['blast'] = 20
+            total_weight += 20
+    
+        if options.get('pdb_search', False):
+            stage_weights['pdb'] = 10
+            total_weight += 10
+    
+        # Normalize weights and calculate progress
+        for s in stage_weights:
+            stage_weights[s] = (stage_weights[s] / total_weight) * 100
+    
+        # Calculate cumulative progress
+        cumulative = 0
+        stage_order = ['gene_conversion', 'uniprot', 'protparam', 'blast', 'pdb']
+    
+        for s in stage_order:
+            if s in stage_weights:
+                if s == stage:
+                    stage_progress = min(max(raw_progress, 0), 100) / 100
+                    return min(cumulative + (stage_weights[s] * stage_progress), 99)
+                elif stage_order.index(s) < stage_order.index(stage):
+                    cumulative += stage_weights[s]
+    
+        return min(max(raw_progress, 0), 99)
 
 if __name__ == "__main__":
     main()

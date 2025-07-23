@@ -581,6 +581,16 @@ class OptionsModal:
         self.parent = parent
         self.result = None
         self.current_options = current_options or {}
+    
+        # Get current options, ensuring gene_ids state is properly synced
+        opts = self.current_options
+        self.protparam_var = tk.BooleanVar(value=opts.get('protparam', True))
+        self.blast_var = tk.BooleanVar(value=opts.get('blast', False))
+        self.amino_acid_var = tk.BooleanVar(value=opts.get('amino_acid', False))
+        self.pdb_var = tk.BooleanVar(value=opts.get('pdb_search', False))
+        self.safe_mode_var = tk.BooleanVar(value=opts.get('safe_mode', True))
+        # This will now properly reflect the current GUI state
+        self.gene_id_var = tk.BooleanVar(value=opts.get('use_gene_ids', False))
 
     def show(self):
         self.modal = tk.Toplevel(self.parent)
@@ -632,9 +642,10 @@ class OptionsModal:
         self._create_option(advanced, "BLAST Search", "Slow: ~1-2 min/protein", self.blast_var, warning=True)
         self._create_option(advanced, "PDB Structures", "3D structure data", self.pdb_var)
 
-        # Settings
+        # Settings section - modify this part
         settings = self._create_section(content, "Settings")
         self._create_option(settings, "Safe Mode", "Preserve existing data", self.safe_mode_var)
+        self._create_option(settings, "Use Gene IDs", "Input uses gene names instead of UniProt IDs", self.gene_id_var)
 
         # Buttons
         btn_frame = tk.Frame(self.modal, bg=Theme.BG)
@@ -684,7 +695,8 @@ class OptionsModal:
             'blast': self.blast_var.get(),
             'amino_acid': self.amino_acid_var.get() and self.protparam_var.get(),
             'pdb_search': self.pdb_var.get(),
-            'safe_mode': self.safe_mode_var.get()
+            'safe_mode': self.safe_mode_var.get(),
+            'use_gene_ids': self.gene_id_var.get()  # NEW
         }
         self.modal.destroy()
 
@@ -716,6 +728,9 @@ class ProtMergeGUI:
             'uniprot': True, 'protparam': True, 'blast': False,
             'amino_acid': False, 'pdb_search': False, 'safe_mode': True
         }
+    
+        # NEW: Add gene ID toggle variable
+        self.use_gene_ids = None  # Will be initialized in run()
 
         # GUI elements
         self.root = None
@@ -746,6 +761,7 @@ class ProtMergeGUI:
         try:
             self._setup_window()
             self.sheet_var = tk.StringVar()
+            self.use_gene_ids = tk.BooleanVar(value=False)  # Initialize here
             self._create_widgets()
             self._center_window()
             self.logger.info("GUI initialized successfully")
@@ -862,10 +878,10 @@ class ProtMergeGUI:
 
     def _create_new_analysis_content(self):
         """Create new analysis interface"""
-        # File section
+        # File section (unchanged)
         file_section = self._create_section(self.content_frame, "📁 Input File")
         self.file_label = tk.Label(file_section, text="No file selected",
-                                  fg=Theme.TEXT_MUTED, bg=Theme.SECONDARY, anchor="w")
+                                fg=Theme.TEXT_MUTED, bg=Theme.SECONDARY, anchor="w")
         self.file_label.pack(fill=tk.X, padx=10, pady=(0, 10))
 
         file_controls = tk.Frame(file_section, bg=Theme.SECONDARY)
@@ -875,15 +891,38 @@ class ProtMergeGUI:
         tk.Label(file_controls, text="Sheet:", fg=Theme.TEXT, bg=Theme.SECONDARY).pack(side=tk.LEFT, padx=(15, 5))
 
         self.sheet_combo = ttk.Combobox(file_controls, textvariable=self.sheet_var,
-                                       state="disabled", width=15)
+                                    state="disabled", width=15)
         self.sheet_combo.pack(side=tk.LEFT)
         self.sheet_combo.bind("<<ComboboxSelected>>", self._load_columns)
 
-        # Column section
+        # Column section with gene ID toggle - FIXED VERSION
         col_section = self._create_section(self.content_frame, "🎯 UniProt Column")
-        tk.Label(col_section, text="Select column with UniProt IDs:",
-                fg=Theme.TEXT, bg=Theme.SECONDARY, anchor="w").pack(fill=tk.X, padx=10, pady=(0, 5))
+    
+        # Column header with toggle button
+        header_frame = tk.Frame(col_section, bg=Theme.SECONDARY)
+        header_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
+    
+        # Column selection label
+        self.column_label = tk.Label(
+            header_frame, 
+            text="Select column with UniProt IDs:",
+            fg=Theme.TEXT, 
+            bg=Theme.SECONDARY, 
+            anchor="w"
+        )
+        self.column_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    
+        # Toggle button for gene IDs
+        self.gene_toggle = ModernButton(
+            header_frame, 
+            "Gene IDs", 
+            self._toggle_gene_mode, 
+            "ghost", 
+            "small"
+        )
+        self.gene_toggle.pack(side=tk.RIGHT)
 
+        # Column listbox (unchanged)
         list_frame = tk.Frame(col_section, bg=Theme.SECONDARY)
         list_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
 
@@ -896,13 +935,13 @@ class ProtMergeGUI:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.column_listbox.bind("<<ListboxSelect>>", self._column_selected)
 
-        # Options section
+        # Options section (unchanged)
         opt_section = self._create_section(self.content_frame, "⚙️ Analysis Options")
         opt_frame = tk.Frame(opt_section, bg=Theme.SECONDARY)
         opt_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
 
         self.options_summary = tk.Label(opt_frame, text="Default: UniProt + ProtParam",
-                                       fg=Theme.TEXT, bg=Theme.SECONDARY, anchor="w")
+                                    fg=Theme.TEXT, bg=Theme.SECONDARY, anchor="w")
         self.options_summary.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         ModernButton(opt_frame, "Configure", self._show_options, "secondary").pack(side=tk.RIGHT)
@@ -915,7 +954,7 @@ class ProtMergeGUI:
         self.progress_bar.pack(fill=tk.X, padx=10, pady=(0, 5))
 
         self.progress_text = tk.Label(self.progress_frame, text="", font=("Segoe UI", 10, "bold"),
-                                     fg=Theme.TEXT, bg=Theme.SECONDARY, anchor="w")
+                                    fg=Theme.TEXT, bg=Theme.SECONDARY, anchor="w")
         self.progress_text.pack(fill=tk.X, padx=10, pady=(0, 10))
 
         # Bottom controls for new analysis
@@ -1075,6 +1114,17 @@ class ProtMergeGUI:
         # Initially disable the button
         self.launch_similarity_btn.config(state="disabled", bg="#4a4a4a")
         self._update_similarity_button_state()
+        
+    def _toggle_gene_mode(self):
+        """Toggle between UniProt ID and Gene ID input modes"""
+        current_state = self.use_gene_ids.get()
+        self.use_gene_ids.set(not current_state)
+    
+        # Update current options
+        self.current_options['use_gene_ids'] = self.use_gene_ids.get()
+    
+        # Update appearance
+        self._update_gene_toggle_appearance()
 
     # =============================================================================
     # FILE HANDLING METHODS
@@ -1497,8 +1547,13 @@ class ProtMergeGUI:
         self.column_selected = False
         self.input_file = None
         self.uniprot_column = None
-        self.completion_dialog = None # Ensure this is cleared
+        self.completion_dialog = None
         self.analysis_in_progress = False
+    
+        # Reset gene ID toggle to default state
+        if hasattr(self, 'use_gene_ids') and self.use_gene_ids:
+            self.use_gene_ids.set(False)
+            self.current_options['use_gene_ids'] = False
 
         # Hide progress (in case it was visible)
         self._hide_progress()
@@ -1518,8 +1573,8 @@ class ProtMergeGUI:
             self.sheet_combo.set('')
 
         self._update_status("Select file and column to continue", Theme.TEXT_MUTED)
-        self._update_start_button() # Re-enable/disable start button based on reset state
-
+        self._update_start_button()
+    
     def _show_statistics(self):
         """Show statistics tool"""
         messagebox.showinfo("Coming Soon", "Statistics tool will be available in a future update.")
@@ -1556,11 +1611,20 @@ class ProtMergeGUI:
 
     def _show_options(self):
         """Show options dialog"""
+        # Sync current GUI state to options before showing modal
+        self.current_options['use_gene_ids'] = self.use_gene_ids.get()
+    
         modal = OptionsModal(self.root, self.current_options)
         result = modal.show()
         if result:
             self.current_options = result
             self.options_configured = True
+        
+            # NEW: Sync the gene ID toggle button state from modal result
+            gene_ids_enabled = result.get('use_gene_ids', False)
+            self.use_gene_ids.set(gene_ids_enabled)
+            self._update_gene_toggle_appearance()
+        
             self._update_options_summary()
             self._update_start_button()
 
@@ -1577,6 +1641,11 @@ class ProtMergeGUI:
             opts.append("PDB")
 
         summary = f"UniProt + {' + '.join(opts)}" if opts else "UniProt only"
+    
+        # Add gene ID mode indicator
+        if self.current_options.get('use_gene_ids'):
+            summary = f"Gene→{summary}"
+    
         if self.current_options.get('safe_mode'):
             summary += " [Safe]"
 
@@ -1633,6 +1702,29 @@ class ProtMergeGUI:
         x = (self.root.winfo_screenwidth() - self.root.winfo_width()) // 2
         y = (self.root.winfo_screenheight() - self.root.winfo_height()) // 2
         self.root.geometry(f"+{x}+{y}")
+    
+    def _update_gene_toggle_appearance(self):
+        """Update the gene toggle button appearance based on current state"""
+        if hasattr(self, 'gene_toggle') and self.gene_toggle:
+            if self.use_gene_ids.get():
+                self.gene_toggle.set_nav_active(True)
+                self.gene_toggle.config(text="Gene IDs ✓")
+                if hasattr(self, 'column_label'):
+                    self.column_label.config(text="Select column with Gene IDs:")
+            else:
+                self.gene_toggle.set_nav_active(False)
+                self.gene_toggle.config(text="Gene IDs")
+                if hasattr(self, 'column_label'):
+                    self.column_label.config(text="Select column with UniProt IDs:")
+
+            # Update status if column is selected
+            if self.column_selected:
+                mode_text = "Gene ID" if self.use_gene_ids.get() else "UniProt ID"
+                try:
+                    col_name = self.column_listbox.get(self.column_listbox.curselection()[0]).split('|')[1].strip()
+                    self._update_status(f"Selected: {col_name} ({mode_text} mode)", Theme.GREEN)
+                except:
+                    pass
 
 
 # =============================================================================

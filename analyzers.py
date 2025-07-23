@@ -91,6 +91,36 @@ class AnalyzerManager:
             self.logger.error(f"Similarity analysis failed: {e}")
             raise
         
+    def run_gene_conversion(self, data, progress_callback=None):
+        """Convert gene IDs to UniProt IDs before running other analyses"""
+        try:
+            if progress_callback:
+                progress_callback(0, "Converting gene IDs to UniProt IDs")
+        
+            # Initialize gene converter if not already done
+            if 'gene_converter' not in self.analyzers:
+                self.analyzers['gene_converter'] = GeneToUniProtConverter()
+        
+            # Add Original_Gene_ID column to store gene IDs
+            if 'Original_Gene_ID' not in data['results'].columns:
+                data['results']['Original_Gene_ID'] = ''
+        
+            # Convert gene IDs to UniProt IDs
+            converted_results = self.analyzers['gene_converter'].convert_gene_list(
+                data['results'], progress_callback
+            )
+        
+            data['results'] = converted_results
+        
+            if progress_callback:
+                progress_callback(100, "Gene ID conversion complete")
+        
+            return data
+        
+        except Exception as e:
+            self.logger.error(f"Gene conversion failed: {e}")
+            raise
+        
 class BaseAnalyzer:
     """Base class for all analyzers"""
     
@@ -818,3 +848,220 @@ class PDBAnalyzer(BaseAnalyzer):
         pdb_fields = ['structure_count', 'best_resolution', 'structure_methods', 'complex_info',
                      'pdb_ids', 'best_structure', 'ligand_info', 'structure_quality']
         self.set_no_value(results, idx, pdb_fields, safe_mode)
+
+class GeneToUniProtConverter(BaseAnalyzer):
+    """Clean, simple gene ID to UniProt ID converter"""
+    
+    def __init__(self):
+        super().__init__("GeneConverter")
+    
+    def convert_gene_to_uniprot(self, gene_id):
+        """Convert single gene symbol to UniProt ID using multiple search strategies"""
+        try:
+            gene_id = str(gene_id).strip().upper()
+            
+            # Strategy 1: Primary gene searches
+            primary_strategies = [
+                f"gene:{gene_id}",
+                f"gene_exact:{gene_id}",
+                f"gene_primary:{gene_id}",
+                f"gene_synonym:{gene_id}",
+            ]
+            
+            for strategy in primary_strategies:
+                result = self._try_search(strategy, gene_id)
+                if result:
+                    return result
+            
+            # Strategy 2: Protein name searches (sometimes gene symbols match protein names)
+            protein_strategies = [
+                f"protein_name:{gene_id}",
+                f"protein_exact:{gene_id}",
+            ]
+            
+            for strategy in protein_strategies:
+                result = self._try_search(strategy, gene_id)
+                if result:
+                    return result
+            
+            # Strategy 3: Cross-reference database searches
+            xref_strategies = [
+                f"database:hgnc AND {gene_id}",
+                f"database:geneid AND {gene_id}",
+                f"database:ensembl AND {gene_id}",
+            ]
+            
+            for strategy in xref_strategies:
+                result = self._try_search(strategy, gene_id)
+                if result:
+                    return result
+            
+            # Strategy 4: Name variations
+            variations = self._get_name_variations(gene_id)
+            for variation in variations:
+                result = self._try_search(f"gene:{variation}", gene_id)
+                if result:
+                    return result
+            
+            # Strategy 5: Broad search with filtering
+            result = self._broad_search_with_filter(gene_id)
+            if result:
+                return result
+            
+            # All strategies failed
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Gene conversion error for {gene_id}: {e}")
+            return None
+    
+    def _try_search(self, query, original_gene):
+        """Execute a single search strategy"""
+        try:
+            import urllib.parse
+            encoded_query = urllib.parse.quote(query)
+            
+            url = f"https://rest.uniprot.org/uniprotkb/search?query={encoded_query}%20AND%20organism_id:9606&format=json&size=5&fields=accession,gene_names,protein_name,reviewed"
+            
+            response = requests.get(url, timeout=8)
+            
+            if response.status_code == 200:
+                data = response.json()
+                results = data.get('results', [])
+                
+                if results:
+                    # Prefer reviewed entries (Swiss-Prot)
+                    reviewed = [r for r in results if r.get('entryType') == 'UniProtKB reviewed (Swiss-Prot)']
+                    best_result = reviewed[0] if reviewed else results[0]
+                    
+                    uniprot_id = best_result.get('primaryAccession')
+                    if uniprot_id:
+                        self.logger.debug(f"Found {original_gene} -> {uniprot_id} using {query}")
+                        return uniprot_id
+            
+            time.sleep(0.1)
+            return None
+            
+        except Exception as e:
+            self.logger.debug(f"Search failed for {query}: {e}")
+            return None
+    
+    def _get_name_variations(self, gene_id):
+        """Generate common gene name variations"""
+        variations = []
+        
+        # Remove trailing numbers (e.g., GENE1 -> GENE)
+        if gene_id[-1].isdigit() and len(gene_id) > 2:
+            variations.append(gene_id[:-1])
+        
+        # Remove trailing letters (e.g., GENEA -> GENE)
+        if gene_id[-1].isalpha() and len(gene_id) > 3:
+            variations.append(gene_id[:-1])
+        
+        # Add common suffixes for short names
+        if len(gene_id) <= 4:
+            variations.extend([gene_id + '1', gene_id + 'A'])
+        
+        # Try lowercase
+        variations.append(gene_id.lower())
+        
+        return list(set(variations))
+    
+    def _broad_search_with_filter(self, gene_id):
+        """Last resort: broad search with intelligent filtering"""
+        try:
+            url = f"https://rest.uniprot.org/uniprotkb/search?query={gene_id}%20AND%20organism_id:9606&format=json&size=20&fields=accession,gene_names,protein_name"
+            
+            response = requests.get(url, timeout=8)
+            
+            if response.status_code == 200:
+                data = response.json()
+                results = data.get('results', [])
+                
+                # Look for exact gene name matches
+                for result in results:
+                    genes = result.get('genes', [])
+                    for gene_info in genes:
+                        # Check primary gene name
+                        primary_gene = gene_info.get('geneName', {}).get('value', '')
+                        if primary_gene.upper() == gene_id.upper():
+                            uniprot_id = result.get('primaryAccession')
+                            self.logger.debug(f"Broad search found {gene_id} -> {uniprot_id}")
+                            return uniprot_id
+                        
+                        # Check synonyms
+                        synonyms = gene_info.get('synonyms', [])
+                        for syn in synonyms:
+                            if syn.get('value', '').upper() == gene_id.upper():
+                                uniprot_id = result.get('primaryAccession')
+                                self.logger.debug(f"Synonym match {gene_id} -> {uniprot_id}")
+                                return uniprot_id
+            
+            return None
+            
+        except Exception as e:
+            self.logger.debug(f"Broad search failed for {gene_id}: {e}")
+            return None
+    
+    def convert_gene_list(self, results, progress_callback=None):
+        """Convert all entries as gene symbols - no UniProt ID detection"""
+        self.logger.info("Starting gene symbol to UniProt ID conversion")
+        self.logger.info("All entries will be processed as gene symbols")
+        
+        converted_count = 0
+        failed_count = 0
+        failed_genes = []
+        total_entries = len(results)
+        
+        for idx, row in results.iterrows():
+            gene_id = str(row['UniProt_ID']).strip()
+            
+            if progress_callback:
+                progress = (idx / total_entries) * 100
+                progress_callback(progress, f"Converting genes ({idx+1}/{total_entries})", f"Processing {gene_id}")
+            
+            # Skip empty/invalid entries
+            if not gene_id or gene_id.upper() in ['', 'NAN', 'NULL', 'NONE', 'NO VALUE FOUND']:
+                self.logger.debug(f"Skipping empty entry at row {idx}")
+                results.at[idx, 'Original_Gene_ID'] = gene_id
+                continue
+            
+            # Convert the gene symbol
+            uniprot_id = self.convert_gene_to_uniprot(gene_id)
+            
+            # Always store the original gene ID
+            results.at[idx, 'Original_Gene_ID'] = gene_id
+            
+            if uniprot_id:
+                results.at[idx, 'UniProt_ID'] = uniprot_id
+                converted_count += 1
+                self.logger.info(f"SUCCESS: {gene_id} -> {uniprot_id}")
+            else:
+                failed_count += 1
+                failed_genes.append(gene_id)
+                self.logger.warning(f"FAILED: Could not convert {gene_id}")
+            
+            # Rate limiting to be respectful to UniProt servers
+            time.sleep(0.15)
+        
+        # Summary report
+        if total_entries > 0:
+            success_rate = (converted_count / total_entries) * 100
+            self.logger.info("=" * 50)
+            self.logger.info("GENE CONVERSION SUMMARY")
+            self.logger.info("=" * 50)
+            self.logger.info(f"Total entries processed: {total_entries}")
+            self.logger.info(f"Successfully converted: {converted_count} ({success_rate:.1f}%)")
+            self.logger.info(f"Failed conversions: {failed_count}")
+            
+            # Show failed genes (limit output for large datasets)
+            if failed_genes:
+                if len(failed_genes) <= 10:
+                    self.logger.info(f"Failed genes: {', '.join(failed_genes)}")
+                else:
+                    self.logger.info(f"Failed genes (first 10): {', '.join(failed_genes[:10])}")
+                    self.logger.info(f"... and {len(failed_genes) - 10} more failed conversions")
+            
+            self.logger.info("=" * 50)
+        
+        return results
