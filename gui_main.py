@@ -1119,12 +1119,12 @@ class ProtMergeGUI:
         """Toggle between UniProt ID and Gene ID input modes"""
         current_state = self.use_gene_ids.get()
         self.use_gene_ids.set(not current_state)
-    
-        # Update current options
+
         self.current_options['use_gene_ids'] = self.use_gene_ids.get()
-    
-        # Update appearance
+
         self._update_gene_toggle_appearance()
+
+        self._update_options_summary()
 
     # =============================================================================
     # FILE HANDLING METHODS
