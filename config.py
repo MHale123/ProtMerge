@@ -15,6 +15,9 @@ PROTPARAM_URL = "https://web.expasy.org/cgi-bin/protparam/protparam"
 BLAST_URL = "https://blast.ncbi.nlm.nih.gov/Blast.cgi"
 PDB_SEARCH_URL = "https://search.rcsb.org/rcsbsearch/v2/query"
 PDB_DATA_URL = "https://data.rcsb.org/rest/v1/core"
+COMPARTMENTS_API_URL = "https://api.jensenlab.org"  
+HPA_API_URL = "https://www.proteinatlas.org"      
+ENSEMBL_API_URL = "https://rest.ensembl.org" 
 
 # Rate limiting (seconds between requests)
 RATE_LIMITS = {
@@ -23,19 +26,52 @@ RATE_LIMITS = {
     'blast': 10.0,
     'pdb': 0.5,
     'similarity': 0.1,
-    'gene_converter': 0.2 
+    'gene_converter': 0.2,
+    'compartments': 0.5,
+    'hpa': 1.0,
+    'ensembl': 0.2,
+    'pubmed': 1.0,
+    'quickgo': 0.5
 }
 
-# Default analysis options
 DEFAULT_OPTIONS = {
-    'uniprot': True,
-    'protparam': True,
+    'uniprot': True,   # Enable UniProt by default for basic protein info
+    'protparam': False,
     'blast': False,
     'amino_acid': False,
     'pdb_search': False,
     'similarity_analysis': False,
     'safe_mode': True,
-    'use_gene_ids': False 
+    'use_gene_ids': False,
+    'compartments': False,
+    'hpa': False
+}
+
+ANALYSIS_DEPENDENCIES = {
+    'gene_id_only': {
+        'compartments': "Requires gene symbols as input",
+        'hpa': "Requires gene symbols as input"
+    },
+    'uniprot_dependent': {
+        'uniprot': "Retrieves sequences and protein data",
+        'protparam': "Requires protein sequence from UniProt",
+        'blast': "Requires protein sequence from UniProt", 
+        'pdb_search': "Uses UniProt ID for structure search"
+    },
+    'protparam_dependent': {
+        'amino_acid': "Requires ProtParam molecular analysis"
+    }
+}
+
+ANALYSIS_HELP_TEXT = {
+    'use_gene_ids': "Switch input mode: gene symbols vs UniProt IDs",
+    'compartments': "Human subcellular localization (gene IDs only)",
+    'hpa': "Human tissue expression data (gene IDs only)", 
+    'uniprot': "Core protein information and sequences",
+    'protparam': "Molecular weight, pI, GRAVY (needs UniProt sequence)",
+    'blast': "Sequence similarity search (needs UniProt sequence)",
+    'pdb_search': "3D structure information (needs UniProt ID)",
+    'amino_acid': "Detailed amino acid composition (needs ProtParam)"
 }
 
 # Output column mappings - maps internal field names to Excel column headers
@@ -94,6 +130,57 @@ AMINO_ACID_COLUMNS = {
     'atomic_comp': 'Atomic Composition'
 }
 
+COMPARTMENTS_CONFIG = {
+    'max_locations_per_gene': 15,
+    'confidence_threshold': 1,  # Minimum confidence score (1-5)
+    'evidence_priority': {
+        'EXP': 5,    # Experimental
+        'IDA': 5,    # Direct Assay  
+        'IPI': 4,    # Physical Interaction
+        'IMP': 4,    # Mutant Phenotype
+        'IGI': 4,    # Genetic Interaction
+        'IEP': 4,    # Expression Pattern
+        'ISS': 3,    # Sequence Similarity
+        'ISO': 3,    # Sequence Orthology
+        'ISA': 3,    # Sequence Alignment
+        'ISM': 3,    # Sequence Model
+        'IGC': 3,    # Genomic Context
+        'IBA': 3,    # Biological Aspect
+        'IBD': 3,    # Biological Data
+        'IKR': 3,    # Key Residues
+        'IRD': 3,    # Rapid Divergence
+        'TAS': 2,    # Traceable Author Statement
+        'NAS': 2,    # Non-traceable Author Statement
+        'IC': 2,     # Curator Inference
+        'IEA': 1,    # Electronic Annotation
+        'ND': 1      # No Data
+    },
+    'source_priority': {
+        'UniProt': 5,
+        'GO/QuickGO': 4,
+        'COMPARTMENTS': 5,
+        'STRING/COMPARTMENTS': 3,
+        'Literature': 2,
+        'Reactome': 4,
+        'MGI': 3
+    }
+}
+
+HUMAN_PROTEIN_COLUMNS = {
+    'compartments_primary_location': 'Primary Subcellular Location',
+    'compartments_primary_confidence': 'Primary Location Confidence (0-5)',
+    'compartments_all_locations': 'All Subcellular Locations',
+    'compartments_confidence_scores': 'All Location Confidence Scores',
+    'compartments_evidence_types': 'Evidence Types',
+    'compartments_data_sources': 'Data Sources',
+    'hpa_primary_tissue': 'Primary Tissue Expression',
+    'hpa_expression_level': 'Primary Expression Level',
+    'hpa_all_tissues': 'All Tissue Expression Data',
+    'hpa_subcellular_location': 'Subcellular Location (HPA)', 
+    'hpa_antibody_reliability': 'Antibody Reliability Score',
+    'hpa_data_source': 'HPA Data Source'
+}
+
 # UI styling themes
 THEMES = {
     'main': {
@@ -117,6 +204,13 @@ THEMES = {
     'pdb': {
         'header': '6F42C1',      # Purple header for PDB sheet
         'alt_row': 'F8F5FF',     # Light purple alternating rows
+        'text_primary': '212529',
+        'text_secondary': '6C757D'
+    },
+    # NEW theme for human protein sheet:
+    'human': {
+        'header': 'E91E63',      # Pink header for human sheet
+        'alt_row': 'FCE4EC',     # Light pink alternating rows
         'text_primary': '212529',
         'text_secondary': '6C757D'
     },

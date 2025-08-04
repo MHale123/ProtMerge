@@ -1,5 +1,5 @@
 """
-excel_formatter.py for ProtMerge v1.2.0
+excel_formatter.py for ProtMerge v1.2.0 - FIXED: UniProt sheet bug and improved logic
 """
 
 import logging
@@ -9,13 +9,12 @@ from pathlib import Path
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
-from config import OUTPUT_COLUMNS, AMINO_ACID_COLUMNS, PDB_COLUMNS, SIMILARITY_COLUMNS, THEMES
-
+from config import OUTPUT_COLUMNS, AMINO_ACID_COLUMNS, PDB_COLUMNS, SIMILARITY_COLUMNS, HUMAN_PROTEIN_COLUMNS, THEMES
 
 class ExcelFormatter:
     """
     Handles Excel output formatting and saving with professional styling.
-    Completely rewritten with proper error handling and similarity support.
+    FIXED: Only creates sheets when analysis was requested AND actual data is available.
     """
     
     def __init__(self):
@@ -25,46 +24,192 @@ class ExcelFormatter:
     def save_results(self, input_file, results, options):
         """
         Save results to professionally formatted Excel file with multiple sheets.
-        
-        Args:
-            input_file: Path to original input file
-            results: DataFrame with analysis results
-            options: Dictionary with analysis options
-            
-        Returns:
-            Path to output file or None if failed
+        FIXED: Only creates main sheet if UniProt-dependent analyses were requested AND have data.
         """
         try:
             self.logger.info(f"Creating Excel output for {len(results)} proteins")
-            
+        
             # Prepare output file path
             output_file = self._prepare_output_file(input_file)
-            
+        
             # Create workbook
             wb = self._create_workbook(input_file)
-            
-            # Always create main results sheet
-            self._create_main_sheet(wb, results)
-            
-            # Create optional sheets based on options and data availability
+        
+            # Check if we need a main sheet (only if UniProt-dependent analyses were requested)
+            needs_main_sheet = self._needs_main_sheet(options)
+            sheets_created = []
+        
+            # Only create main sheet if UniProt-dependent analyses were requested AND have data
+            if needs_main_sheet and self._has_main_sheet_data(results, options):
+                self._create_main_sheet(wb, results, options)
+                sheets_created.append('ProtMerge_Results')
+            elif needs_main_sheet:
+                self.logger.info("UniProt-dependent analyses requested but no data available - skipping main sheet")
+        
+            # Create optional sheets only if they have actual data AND were requested
             if options.get('amino_acid', False) and self._has_amino_acid_data(results):
                 self._create_amino_acid_sheet(wb, results)
-            
+                sheets_created.append('Amino_Acid_Composition')
+        
             if options.get('pdb_search', False) and self._has_pdb_data(results):
                 self._create_pdb_sheet(wb, results)
-            
-            # Create similarity sheet if results are available
+                sheets_created.append('PDB_Structural_Analysis')
+        
+            # Human analyses sheet - create if human analyses were requested
+            human_analyses_requested = options.get('compartments', False) or options.get('hpa', False)
+            if human_analyses_requested:
+                if self._has_human_protein_data(results):
+                    self._create_human_protein_sheet(wb, results)
+                    sheets_created.append('Human_Protein_Data')
+                else:
+                    # Create minimal sheet even if no data, since this was the primary analysis requested
+                    self._create_minimal_human_sheet(wb, results, options)
+                    sheets_created.append('Human_Protein_Data')
+
+            # Similarity sheet if results are available
             if options.get('similarity_results') is not None:
                 self._create_similarity_sheet(wb, results, options)
-            
+                sheets_created.append('Similarity_Analysis')
+        
+            # If no sheets were created, create a minimal results sheet
+            if not sheets_created:
+                self._create_minimal_results_sheet(wb, results)
+                sheets_created.append('Analysis_Results')
+        
             # Save workbook
-            return self._save_workbook(wb, output_file)
-            
+            saved_file = self._save_workbook(wb, output_file)
+            if saved_file:
+                self.logger.info(f"Created Excel sheets: {', '.join(sheets_created)}")
+        
+            return saved_file
+        
         except Exception as e:
             self.logger.error(f"Excel formatting failed: {e}")
             import traceback
             self.logger.error(f"Traceback: {traceback.format_exc()}")
             return self._create_emergency_backup(results, input_file)
+    
+    def _needs_main_sheet(self, options):
+        """Check if main sheet with UniProt-dependent data is needed"""
+        uniprot_dependent_analyses = ['uniprot', 'protparam', 'blast', 'pdb_search']
+        return any(options.get(analysis, False) for analysis in uniprot_dependent_analyses)
+
+    def _has_main_sheet_data(self, results, options):
+        """Check if we have data for the main sheet"""
+        if not self._needs_main_sheet(options):
+            return False
+    
+        # Check if any requested UniProt-dependent analyses have data
+        if options.get('uniprot', False) and self._has_uniprot_data(results):
+            return True
+        if options.get('protparam', False) and self._has_protparam_data(results):
+            return True
+        if options.get('blast', False) and self._has_blast_data(results):
+            return True
+        if options.get('pdb_search', False) and self._has_pdb_data(results):
+            return True
+    
+        return False
+
+    def _create_minimal_human_sheet(self, wb, results, options):
+        """Create minimal sheet for human-only analysis"""
+        if 'Human_Protein_Data' in wb.sheetnames:
+            wb.remove(wb['Human_Protein_Data'])
+    
+        ws = wb.create_sheet('Human_Protein_Data')
+    
+        # Create minimal dataframe with gene IDs (which are in UniProt_ID column at this point)
+        human_df = pd.DataFrame()
+        human_df['Gene ID'] = results['UniProt_ID']  # These are actually gene IDs for human-only analysis
+    
+        # Add human protein columns
+        for internal_key, excel_column in HUMAN_PROTEIN_COLUMNS.items():
+            if internal_key in results.columns:
+                human_df[excel_column] = results[internal_key]
+            else:
+                human_df[excel_column] = "NO VALUE FOUND"
+    
+        self._write_dataframe_to_sheet(ws, human_df)
+        self._format_sheet(ws, THEMES['human'])
+    
+        self.logger.info("Created minimal human protein data sheet")
+
+    def _create_minimal_results_sheet(self, wb, results):
+        """Create minimal results sheet when no other sheets are appropriate"""
+        if 'Analysis_Results' in wb.sheetnames:
+            wb.remove(wb['Analysis_Results'])
+    
+        ws = wb.create_sheet('Analysis_Results')
+    
+        # Create basic dataframe
+        minimal_df = pd.DataFrame()
+        minimal_df['Input ID'] = results['UniProt_ID']
+    
+        # Add original gene ID if available
+        if 'Original_Gene_ID' in results.columns:
+            has_gene_data = results['Original_Gene_ID'].apply(
+                lambda x: pd.notna(x) and str(x).strip() != ''
+            ).any()
+        
+            if has_gene_data:
+                minimal_df['Original Gene ID'] = results['Original_Gene_ID']
+    
+        self._write_dataframe_to_sheet(ws, minimal_df)
+        self._format_sheet(ws, THEMES['main'])
+    
+        self.logger.info("Created minimal analysis results sheet")
+
+    def _determine_columns_to_include(self, results, options):
+        """
+        FIXED: Determine which columns to include based on what was actually analyzed AND requested
+        This method now properly checks both conditions to avoid the UniProt sheet bug
+        """
+        columns_to_include = {}
+        
+        # FIXED: UniProt data columns (only if UniProt analysis was requested AND has data)
+        if options.get('uniprot', False):
+            if self._has_uniprot_data(results):
+                uniprot_columns = {
+                    'organism': 'Organism',
+                    'gene_name': 'Gene Name', 
+                    'function': 'Protein Function/Notes',
+                    'environment': 'Environment Source',
+                    'sequence': 'Protein Sequence',
+                    'alphafold': 'AlphaFold Link',
+                    'keywords': 'Relevant Keywords',
+                    'structure': 'Structure Type'
+                }
+                columns_to_include.update(uniprot_columns)
+            else:
+                self.logger.info("UniProt was requested but no data was found - skipping UniProt columns")
+        
+        # FIXED: ProtParam columns (only if ProtParam analysis was requested AND has data)
+        if options.get('protparam', False):
+            if self._has_protparam_data(results):
+                protparam_columns = {
+                    'mw': 'ProtParam: MW',
+                    'pi': 'ProtParam: pI',
+                    'gravy': 'ProtParam: GRAVY',
+                    'ext': 'Extinction Coefficient (M-1 cm-1)'
+                }
+                columns_to_include.update(protparam_columns)
+            else:
+                self.logger.info("ProtParam was requested but no data was found - skipping ProtParam columns")
+        
+        # FIXED: BLAST columns (only if BLAST analysis was requested AND has data)
+        if options.get('blast', False):
+            if self._has_blast_data(results):
+                blast_columns = {
+                    'similar': 'BLAST Similar Proteins',
+                    'identity': '% Identity (Top Hit)',
+                    'evalue': 'E-value (Top Hit)',
+                    'align': 'Alignment Length (Top Hit)'
+                }
+                columns_to_include.update(blast_columns)
+            else:
+                self.logger.info("BLAST was requested but no data was found - skipping BLAST columns")
+        
+        return columns_to_include
     
     def _prepare_output_file(self, input_file):
         """Prepare output file path with conflict resolution"""
@@ -101,47 +246,98 @@ class ExcelFormatter:
         
         return wb
     
-    def _create_main_sheet(self, wb, results):
-        """Create main results sheet with proper formatting"""
+    def _create_main_sheet(self, wb, results, options):
+        """Create main results sheet with only data that was actually collected"""
         # Remove existing sheet if it exists
         if 'ProtMerge_Results' in wb.sheetnames:
             wb.remove(wb['ProtMerge_Results'])
         
         ws = wb.create_sheet('ProtMerge_Results')
         
-        # Prepare data for output
-        output_df = self._prepare_main_data(results)
+        # Prepare data for output - only include columns that were actually analyzed
+        output_df = self._prepare_main_data_selective(results, options)
         
         # Write to sheet
         self._write_dataframe_to_sheet(ws, output_df)
         self._format_sheet(ws, THEMES['main'])
         
-        self.logger.info(f"Created main sheet with {len(output_df)} entries")
+        self.logger.info(f"Created main sheet with {len(output_df)} entries and {len(output_df.columns)} data columns")
     
-    def _prepare_main_data(self, results):
-        """Prepare main results data for Excel output"""
+    def _prepare_main_data_selective(self, results, options):
+        """FIXED: Prepare main results data for Excel output - only include analyzed data"""
         output_df = pd.DataFrame()
+        
+        # Always include UniProt ID
         output_df['UniProt ID'] = results['UniProt_ID']
     
-        # NEW: Add Original Gene ID column if it exists and has data
+        # Add Original Gene ID column if it exists and has data
         if 'Original_Gene_ID' in results.columns:
             has_gene_data = results['Original_Gene_ID'].apply(
-                lambda x: pd.notna(x) and str(x).strip() != ''
+                lambda x: pd.notna(x) and str(x).strip() != '' and str(x) != str(results['UniProt_ID'].iloc[0])
             ).any()
         
             if has_gene_data:
                 output_df['Original Gene ID'] = results['Original_Gene_ID']
     
-        # Add basic output columns that exist in results
-        for internal_key, excel_column in OUTPUT_COLUMNS.items():
-            if internal_key == 'original_gene_id':
-                continue  # Already handled above
+        # FIXED: Add columns based on what was actually analyzed AND requested
+        columns_to_include = self._determine_columns_to_include(results, options)
+        
+        for internal_key, excel_column in columns_to_include.items():
             if internal_key in results.columns:
                 output_df[excel_column] = results[internal_key]
             else:
+                # This shouldn't happen with the fixed logic, but keeping as safety net
+                self.logger.warning(f"Column {internal_key} was expected but not found in results")
                 output_df[excel_column] = "NO VALUE FOUND"
     
+        self.logger.info(f"Main sheet will include columns: {list(columns_to_include.values())}")
         return output_df
+    
+    def _has_uniprot_data(self, results):
+        """Check if UniProt data is actually present"""
+        uniprot_keys = ['organism', 'gene_name', 'function', 'sequence']
+        return self._has_data_for_fields(results, uniprot_keys)
+    
+    def _has_protparam_data(self, results):
+        """Check if ProtParam data is actually present"""
+        protparam_keys = ['mw', 'pi', 'gravy', 'ext']
+        return self._has_data_for_fields(results, protparam_keys)
+    
+    def _has_blast_data(self, results):
+        """Check if BLAST data is actually present"""
+        blast_keys = ['similar', 'identity', 'evalue', 'align']
+        return self._has_data_for_fields(results, blast_keys)
+    
+    def _has_amino_acid_data(self, results):
+        """Check if amino acid data is available"""
+        aa_keys = list(AMINO_ACID_COLUMNS.keys())
+        return self._has_data_for_fields(results, aa_keys)
+    
+    def _has_pdb_data(self, results):
+        """Check if PDB data is available"""
+        pdb_keys = list(PDB_COLUMNS.keys())
+        return self._has_data_for_fields(results, pdb_keys)
+    
+    def _has_human_protein_data(self, results):
+        """Check if human protein data is available"""
+        human_keys = list(HUMAN_PROTEIN_COLUMNS.keys())
+        return self._has_data_for_fields(results, human_keys)
+    
+    def _has_data_for_fields(self, results, field_keys):
+        """Check if any of the specified fields have actual data"""
+        for key in field_keys:
+            if key in results.columns:
+                has_data = results[key].apply(
+                    lambda x: (pd.notna(x) and 
+                              str(x) != "NO VALUE FOUND" and 
+                              str(x).strip() != "" and
+                              str(x).lower() != "nan")
+                ).any()
+                if has_data:
+                    self.logger.debug(f"Found data for field: {key}")
+                    return True
+        self.logger.debug(f"No data found for any fields in: {field_keys}")
+        return False
     
     def _create_amino_acid_sheet(self, wb, results):
         """Create amino acid composition sheet"""
@@ -157,8 +353,23 @@ class ExcelFormatter:
         self._write_dataframe_to_sheet(ws, aa_df)
         self._format_sheet(ws, THEMES['amino'])
         
-        has_data = self._has_amino_acid_data(results)
-        self.logger.info(f"Created amino acid sheet ({'with data' if has_data else 'no data available'})")
+        self.logger.info("Created amino acid composition sheet with actual data")
+
+    def _create_human_protein_sheet(self, wb, results):
+        """Create human protein analysis sheet"""
+        if 'Human_Protein_Data' in wb.sheetnames:
+            wb.remove(wb['Human_Protein_Data'])
+    
+        ws = wb.create_sheet('Human_Protein_Data')
+    
+        # Prepare human protein data
+        human_df = self._prepare_human_protein_data(results)
+    
+        # Write to sheet
+        self._write_dataframe_to_sheet(ws, human_df)
+        self._format_sheet(ws, THEMES['human'])
+    
+        self.logger.info("Created human protein analysis sheet with actual data")
     
     def _prepare_amino_acid_data(self, results):
         """Prepare amino acid composition data"""
@@ -180,6 +391,41 @@ class ExcelFormatter:
         
         return aa_df
     
+    def _prepare_human_protein_data(self, results):
+        """Prepare human protein data for Excel output"""
+        human_df = pd.DataFrame()
+        human_df['UniProt ID'] = results['UniProt_ID']
+    
+        # Add original gene ID if available
+        if 'Original_Gene_ID' in results.columns:
+            has_gene_data = results['Original_Gene_ID'].apply(
+                lambda x: pd.notna(x) and str(x).strip() != ''
+            ).any()
+        
+            if has_gene_data:
+                human_df['Original Gene ID'] = results['Original_Gene_ID']
+    
+        # Add gene name if available
+        if 'gene_name' in results.columns:
+            human_df['Gene Name'] = results['gene_name']
+        else:
+            human_df['Gene Name'] = "N/A"
+    
+        # Add human protein columns
+        for internal_key, excel_column in HUMAN_PROTEIN_COLUMNS.items():
+            if internal_key in results.columns:
+                human_df[excel_column] = results[internal_key]
+            else:
+                # Set appropriate default values for missing data
+                if 'confidence' in internal_key and 'primary' in internal_key:
+                    human_df[excel_column] = 0  # Numerical 0 for missing confidence
+                elif 'reliability' in internal_key:
+                    human_df[excel_column] = 0  # Numerical 0 for missing reliability
+                else:
+                    human_df[excel_column] = "NO VALUE FOUND"
+    
+        return human_df
+    
     def _create_pdb_sheet(self, wb, results):
         """Create PDB structural analysis sheet"""
         if 'PDB_Structural_Analysis' in wb.sheetnames:
@@ -194,8 +440,7 @@ class ExcelFormatter:
         self._write_dataframe_to_sheet(ws, pdb_df)
         self._format_sheet(ws, THEMES['pdb'])
         
-        has_data = self._has_pdb_data(results)
-        self.logger.info(f"Created PDB sheet ({'with data' if has_data else 'no data available'})")
+        self.logger.info("Created PDB structural analysis sheet with actual data")
     
     def _prepare_pdb_data(self, results):
         """Prepare PDB structural data"""
@@ -218,14 +463,7 @@ class ExcelFormatter:
         return pdb_df
     
     def _create_similarity_sheet(self, wb, results, options):
-        """
-        Create similarity analysis sheet - FIXED VERSION with proper self parameter
-        
-        Args:
-            wb: Workbook object
-            results: Main results DataFrame
-            options: Analysis options containing similarity results
-        """
+        """Create similarity analysis sheet"""
         if 'Similarity_Analysis' in wb.sheetnames:
             wb.remove(wb['Similarity_Analysis'])
         
@@ -325,30 +563,6 @@ class ExcelFormatter:
         except Exception as e:
             self.logger.warning(f"Could not add similarity formatting: {e}")
     
-    def _has_amino_acid_data(self, results):
-        """Check if amino acid data is available"""
-        aa_keys = list(AMINO_ACID_COLUMNS.keys())
-        return self._has_data_for_fields(results, aa_keys)
-    
-    def _has_pdb_data(self, results):
-        """Check if PDB data is available"""
-        pdb_keys = list(PDB_COLUMNS.keys())
-        return self._has_data_for_fields(results, pdb_keys)
-    
-    def _has_data_for_fields(self, results, field_keys):
-        """Check if any of the specified fields have actual data"""
-        for key in field_keys:
-            if key in results.columns:
-                has_data = results[key].apply(
-                    lambda x: (pd.notna(x) and 
-                              str(x) != "NO VALUE FOUND" and 
-                              str(x).strip() != "" and
-                              str(x).lower() != "nan")
-                ).any()
-                if has_data:
-                    return True
-        return False
-    
     def _write_dataframe_to_sheet(self, ws, df):
         """Write DataFrame to worksheet"""
         for r in dataframe_to_rows(df, index=False, header=True):
@@ -431,10 +645,6 @@ class ExcelFormatter:
         """Save workbook with error handling"""
         try:
             wb.save(output_file)
-            sheets = [ws for ws in wb.sheetnames 
-                     if any(name in ws for name in ['ProtMerge', 'Amino', 'PDB', 'Similarity'])]
-            self.logger.info(f"Results saved to {output_file}")
-            self.logger.info(f"Created sheets: {', '.join(sheets)}")
             return output_file
             
         except PermissionError:
@@ -499,97 +709,10 @@ class ExcelFormatter:
             return None
     
     def add_similarity_results_to_options(self, options, similarity_results, central_protein_id):
-        """
-        Add similarity results to options for Excel export.
-        
-        Args:
-            options: Existing options dictionary
-            similarity_results: DataFrame with similarity results
-            central_protein_id: ID of central protein
-            
-        Returns:
-            Updated options dictionary
-        """
+        """Add similarity results to options for Excel export."""
         options = options.copy()
         options['similarity_results'] = similarity_results
         options['central_protein_id'] = central_protein_id
         options['similarity_analysis'] = True
         
         return options
-
-
-# =============================================================================
-# UTILITY FUNCTIONS
-# =============================================================================
-
-def format_similarity_results_for_excel(similarity_results, central_protein):
-    """
-    Format similarity results for Excel export.
-    
-    Args:
-        similarity_results: DataFrame with similarity results
-        central_protein: ID of central protein
-        
-    Returns:
-        Formatted DataFrame ready for Excel export
-    """
-    if similarity_results.empty:
-        return pd.DataFrame({
-            'Status': ['No Results'],
-            'Central Protein': [central_protein],
-            'Message': ['Similarity analysis produced no results']
-        })
-    
-    # Format main results
-    formatted_df = pd.DataFrame()
-    formatted_df['Rank'] = range(1, len(similarity_results) + 1)
-    formatted_df['Protein ID'] = similarity_results['protein_id']
-    formatted_df['Overall Similarity'] = similarity_results['overall_similarity'].round(4)
-    formatted_df['Data Quality Score'] = similarity_results['data_quality'].round(3)
-    
-    # Add category scores if available
-    category_columns = [
-        'sequence_length', 'molecular_weight', 'isoelectric_point',
-        'gravy_score', 'functional_keywords', 'organism_similarity'
-    ]
-    
-    for col in category_columns:
-        if col in similarity_results.columns:
-            display_name = col.replace('_', ' ').title()
-            formatted_df[display_name] = similarity_results[col].round(3)
-    
-    return formatted_df
-
-
-def create_similarity_summary(similarity_results, central_protein):
-    """
-    Create summary statistics for similarity analysis.
-    
-    Args:
-        similarity_results: DataFrame with similarity results
-        central_protein: ID of central protein
-        
-    Returns:
-        Dictionary with summary statistics
-    """
-    if similarity_results.empty:
-        return {
-            'central_protein': central_protein,
-            'total_proteins': 0,
-            'mean_similarity': 0.0,
-            'max_similarity': 0.0,
-            'min_similarity': 0.0,
-            'high_similarity_count': 0
-        }
-    
-    similarities = similarity_results['overall_similarity']
-    
-    return {
-        'central_protein': central_protein,
-        'total_proteins': len(similarity_results),
-        'mean_similarity': similarities.mean(),
-        'max_similarity': similarities.max(),
-        'min_similarity': similarities.min(),
-        'high_similarity_count': (similarities > 0.7).sum(),
-        'analysis_timestamp': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
-    }

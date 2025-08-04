@@ -232,7 +232,7 @@ class ProgressBar(tk.Frame):
 
 
 class CompletionDialog:
-    """Enhanced completion dialog with multiple options and scrollable content"""
+    """Enhanced completion dialog with accurate analysis summary display"""
 
     def __init__(self, parent, output_file, analysis_summary):
         self.parent = parent
@@ -240,15 +240,15 @@ class CompletionDialog:
         self.analysis_summary = analysis_summary
         self.result = None
         self.modal = None
-        self.summary_canvas = None # To hold the canvas for the summary
-        self.summary_frame_inner = None # To hold the frame inside the canvas
+        self.summary_canvas = None
+        self.summary_frame_inner = None
 
     def show(self):
         self.modal = tk.Toplevel(self.parent)
         self.modal.title("Analysis Complete")
-        self.modal.geometry("700x600") # Maintain initial size, content will manage itself
+        self.modal.geometry("700x600")
         self.modal.configure(bg=Theme.BG)
-        self.modal.resizable(False, False) # Keep fixed for consistent layout
+        self.modal.resizable(False, False)
         self.modal.transient(self.parent)
         self.modal.grab_set()
 
@@ -264,7 +264,7 @@ class CompletionDialog:
 
         # Ensure content is correctly sized after everything is visible
         self.modal.update_idletasks()
-        self._on_modal_resize(None) # Force initial resize call
+        self._on_modal_resize(None)
 
         self.parent.wait_window(self.modal)
         return self.result
@@ -285,21 +285,18 @@ class CompletionDialog:
                 font=("Segoe UI", 11), fg="white", bg=Theme.GREEN).pack()
 
         # Bottom buttons (fixed at bottom)
-        self._create_bottom_buttons() # Call this first so it reserves space at the bottom
+        self._create_bottom_buttons()
 
         # Main content area (between header and bottom buttons)
         main_content_area = tk.Frame(self.modal, bg=Theme.BG)
         main_content_area.pack(fill=tk.BOTH, expand=True, padx=30, pady=20)
 
-        # Results summary (now scrollable)
+        # Results summary (now scrollable with accurate data)
         summary_container = self._create_results_summary(main_content_area)
-        # summary_container packs with fill=tk.X and doesn't expand vertically
-        # The canvas inside it will manage its own scrolling if content exceeds.
         summary_container.pack(fill=tk.X, pady=(0, 20))
 
         # Action options (fixed grid)
         action_options_frame = self._create_action_options(main_content_area)
-        # This frame must fill the remaining vertical space
         action_options_frame.pack(fill=tk.BOTH, expand=True)
 
     def _create_results_summary(self, parent):
@@ -314,13 +311,13 @@ class CompletionDialog:
         tk.Label(title_frame, text="📊 Results Summary", font=("Segoe UI", 12, "bold"),
                 fg=Theme.TEXT, bg=Theme.TERTIARY).pack(side=tk.LEFT, padx=15, pady=8)
 
-        # Content area for summary - now a scrollable canvas
+        # Content area for summary - scrollable canvas
         content_frame = tk.Frame(summary_outer_frame, bg=Theme.SECONDARY)
-        content_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=15) # Pad content within outer frame
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
 
         self.summary_canvas = tk.Canvas(content_frame, bg=Theme.SECONDARY, highlightthickness=0)
         self.summary_scrollbar = ttk.Scrollbar(content_frame, orient="vertical", command=self.summary_canvas.yview)
-        self.summary_frame_inner = tk.Frame(self.summary_canvas, bg=Theme.SECONDARY) # This holds the actual summary text
+        self.summary_frame_inner = tk.Frame(self.summary_canvas, bg=Theme.SECONDARY)
 
         self.summary_frame_inner.bind(
             "<Configure>",
@@ -329,27 +326,23 @@ class CompletionDialog:
             )
         )
 
-        # Initial width for the window inside the canvas. It will be updated by _on_modal_resize.
-        # Use a placeholder width for now, it will be corrected once modal is visible.
         self.summary_canvas.create_window((0, 0), window=self.summary_frame_inner, anchor="nw", width=1)
         self.summary_canvas.configure(yscrollcommand=self.summary_scrollbar.set)
 
         self.summary_scrollbar.pack(side="right", fill="y")
         self.summary_canvas.pack(side="left", fill="both", expand=True)
 
-        # Bind mouse wheel for scrolling on this specific canvas
+        # Bind mouse wheel for scrolling
         def _on_summary_mousewheel(event):
-            # Normalizes delta for different OS. Windows: 120, Mac: variable.
-            # Using int(-event.delta/120) makes it work like a standard scroll.
-            if event.num == 4 or event.delta > 0: # Scroll up
+            if event.num == 4 or event.delta > 0:
                 self.summary_canvas.yview_scroll(-1, "units")
-            elif event.num == 5 or event.delta < 0: # Scroll down
+            elif event.num == 5 or event.delta < 0:
                 self.summary_canvas.yview_scroll(1, "units")
-        self.summary_canvas.bind("<MouseWheel>", _on_summary_mousewheel) # Windows/macOS
-        self.summary_canvas.bind("<Button-4>", _on_summary_mousewheel)  # Linux scroll up
-        self.summary_canvas.bind("<Button-5>", _on_summary_mousewheel)  # Linux scroll down
+        self.summary_canvas.bind("<MouseWheel>", _on_summary_mousewheel)
+        self.summary_canvas.bind("<Button-4>", _on_summary_mousewheel)
+        self.summary_canvas.bind("<Button-5>", _on_summary_mousewheel)
 
-        # File info (packed into the inner scrollable frame)
+        # File info
         file_frame = tk.Frame(self.summary_frame_inner, bg=Theme.SECONDARY)
         file_frame.pack(fill=tk.X, pady=(0, 10))
 
@@ -360,27 +353,8 @@ class CompletionDialog:
         tk.Label(file_frame, text=filename, font=("Segoe UI", 10),
                 fg=Theme.CYAN, bg=Theme.SECONDARY).pack(side=tk.LEFT, padx=(5, 0))
 
-        # Analysis summary text (packed into the inner scrollable frame)
-        summary = self.analysis_summary
-        summary_text = f"""• {summary['total_proteins']} proteins processed
-• UniProt data: {summary['uniprot_complete']}/{summary['total_proteins']} ({summary['uniprot_percent']:.1f}%)"""
-
-        if summary.get('protparam_complete', 0) > 0:
-            summary_text += f"\n• ProtParam data: {summary['protparam_complete']}/{summary['total_proteins']} ({summary['protparam_percent']:.1f}%)"
-
-        if summary.get('blast_complete', 0) > 0:
-            summary_text += f"\n• BLAST data: {summary['blast_complete']}/{summary['total_proteins']} ({summary['blast_percent']:.1f}%)"
-
-        if summary.get('pdb_complete', 0) > 0:
-            summary_text += f"\n• PDB structures: {summary['pdb_complete']}/{summary['total_proteins']} ({summary['pdb_percent']:.1f}%)"
-
-        # *** IMPORTANT FIX: REMOVED DUMMY LINES ***
-        # The dummy lines were here for testing and should NOT be in the final version.
-        # for i in range(5):
-        #     summary_text += f"\n• Additional line {i+1} to demonstrate scrolling capability and longer summaries."
-        #     summary_text += f"\n• This ensures the summary section is the only one that scrolls, not the action options."
-        # *** END FIX ***
-
+        # Dynamic analysis summary based on actual results
+        summary_text = self._build_accurate_summary_text()
 
         tk.Label(self.summary_frame_inner, text=summary_text, font=("Segoe UI", 10),
                 fg=Theme.TEXT, bg=Theme.SECONDARY, justify=tk.LEFT).pack(anchor=tk.W)
@@ -390,30 +364,70 @@ class CompletionDialog:
 
         return summary_outer_frame
 
+    def _build_accurate_summary_text(self):
+        """Build accurate summary text based on actual analysis results"""
+        summary = self.analysis_summary
+        total_proteins = summary.get('total_proteins', 0)
+        
+        if total_proteins == 0:
+            return "• No proteins were processed"
+        
+        summary_lines = [f"• {total_proteins} proteins processed"]
+        
+        # Track which analyses were actually run (not just successful)
+        analyses_run = []
+        analyses_with_data = []
+        
+        # Check each analysis type
+        analysis_checks = [
+            ('compartments_complete', 'compartments_percent', 'COMPARTMENTS'),
+            ('hpa_complete', 'hpa_percent', 'Human Protein Atlas'),
+            ('uniprot_complete', 'uniprot_percent', 'UniProt'),
+            ('protparam_complete', 'protparam_percent', 'ProtParam'),
+            ('blast_complete', 'blast_percent', 'BLAST'),
+            ('pdb_complete', 'pdb_percent', 'PDB structures')
+        ]
+        
+        for complete_key, percent_key, display_name in analysis_checks:
+            complete_count = summary.get(complete_key, 0)
+            percent = summary.get(percent_key, 0)
+            
+            # Only show if this analysis was actually attempted (has a count >= 0 and is in summary)
+            if complete_key in summary:
+                summary_lines.append(f"• {display_name}: {complete_count}/{total_proteins} ({percent:.1f}%)")
+                analyses_run.append(display_name)
+                
+                if complete_count > 0:
+                    analyses_with_data.append(display_name)
+        
+        # Add summary of what worked
+        if analyses_with_data:
+            summary_lines.append(f"• Successful analyses: {', '.join(analyses_with_data)}")
+        
+        # Add warning if no analyses produced data
+        if not analyses_with_data and analyses_run:
+            summary_lines.append("• ⚠️ No analyses produced successful results")
+        elif not analyses_run:
+            summary_lines.append("• ⚠️ No analyses were configured to run")
+        
+        return "\n".join(summary_lines)
+
     def _on_modal_resize(self, event):
         """Adjusts the internal frame width inside the canvas when the modal resizes."""
         if self.summary_canvas and self.summary_frame_inner:
-            # Calculate the effective width for the inner frame
             canvas_width = self.summary_canvas.winfo_width()
             scrollbar_width = self.summary_scrollbar.winfo_width() if self.summary_scrollbar.winfo_ismapped() else 0
-            new_inner_width = canvas_width - scrollbar_width - 5 # A small buffer
+            new_inner_width = canvas_width - scrollbar_width - 5
 
-            # Update the width of the window created inside the canvas
-            # Ensure the item exists before configuring
             if self.summary_canvas.find_all():
                 self.summary_canvas.itemconfig(self.summary_canvas.find_all()[0], width=new_inner_width)
             else:
-                # If for some reason create_window hasn't run yet, try again.
-                # This should ideally not happen if show() calls update_idletasks.
                 self.summary_canvas.create_window((0, 0), window=self.summary_frame_inner, anchor="nw", width=new_inner_width)
 
-            # Update the scroll region to reflect potential new content size
             self.summary_canvas.configure(scrollregion=self.summary_canvas.bbox("all"))
-
 
     def _create_action_options(self, parent):
         options_frame = tk.Frame(parent, bg=Theme.SECONDARY, relief="solid", bd=1)
-        # This frame should fill the remaining vertical space after the summary and before bottom buttons
         options_frame.pack(fill=tk.BOTH, expand=True)
 
         # Title
@@ -428,7 +442,7 @@ class CompletionDialog:
         options_content = tk.Frame(options_frame, bg=Theme.SECONDARY)
         options_content.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
 
-        # Configure grid weights - ensuring cells expand
+        # Configure grid weights
         options_content.grid_rowconfigure(0, weight=1)
         options_content.grid_rowconfigure(1, weight=1)
         options_content.grid_columnconfigure(0, weight=1)
@@ -461,14 +475,13 @@ class CompletionDialog:
 
     def _create_action_option(self, parent, title, description, command, row, col):
         option_frame = tk.Frame(parent, bg=Theme.TERTIARY, relief="solid", bd=1)
-        option_frame.grid(row=row, column=col, padx=5, pady=5, sticky="nsew") # Added sticky
+        option_frame.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
 
-        # Ensure elements within option_frame also expand to fill available space
-        option_frame.grid_rowconfigure(0, weight=1) # For text content
-        option_frame.grid_rowconfigure(1, weight=0) # For button (fixed size)
+        option_frame.grid_rowconfigure(0, weight=1)
+        option_frame.grid_rowconfigure(1, weight=0)
         option_frame.grid_columnconfigure(0, weight=1)
 
-        # Inner frame for title and description to allow flexible wrapping
+        # Inner frame for title and description
         text_content_frame = tk.Frame(option_frame, bg=Theme.TERTIARY)
         text_content_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 5))
 
@@ -476,19 +489,15 @@ class CompletionDialog:
         tk.Label(text_content_frame, text=title, font=("Segoe UI", 11, "bold"),
                 fg=Theme.TEXT, bg=Theme.TERTIARY).pack(pady=(0, 5))
 
-        # Description - use wraplength and pack with fill/expand to allow resizing
-        # The wraplength should be dynamic, but fixed for now.
-        # Adjusted wraplength to provide enough room
+        # Description
         tk.Label(text_content_frame, text=description, font=("Segoe UI", 9),
                 fg=Theme.TEXT_MUTED, bg=Theme.TERTIARY, wraplength=180,
                 justify=tk.CENTER).pack(fill=tk.BOTH, expand=True, padx=10)
 
-
-        # Button - Ensure button packs correctly within its frame at the bottom
+        # Button
         btn = ModernButton(option_frame, "Select", command, "secondary")
-        btn.pack(pady=(0, 10), padx=20) # Packed centrally at the bottom of the option_frame
+        btn.pack(pady=(0, 10), padx=20)
 
-        # Additional click binding for reliability
         def on_click(event=None):
             try:
                 command()
@@ -499,19 +508,19 @@ class CompletionDialog:
 
     def _create_bottom_buttons(self):
         button_area = tk.Frame(self.modal, bg=Theme.BG, height=80)
-        button_area.pack(fill=tk.X, side=tk.BOTTOM, expand=False) # Pack at bottom, don't expand vertically
+        button_area.pack(fill=tk.X, side=tk.BOTTOM, expand=False)
 
-        # Ensure the content within button_area is centered
         button_container = tk.Frame(button_area, bg=Theme.BG)
-        button_container.pack(expand=True, fill=tk.BOTH, padx=30, pady=20) # Allow inner container to expand within button_area
+        button_container.pack(expand=True, fill=tk.BOTH, padx=30, pady=20)
 
         button_frame = tk.Frame(button_container, bg=Theme.BG)
-        button_frame.pack(anchor=tk.CENTER, expand=False) # Do not expand this frame, just center its content
+        button_frame.pack(anchor=tk.CENTER, expand=False)
 
         ModernButton(button_frame, "📁 Open Results File", self._open_results, "secondary").pack(side=tk.LEFT, padx=(0, 15))
         ModernButton(button_frame, "🔄 Return to Main Menu", self._new_analysis, "warning").pack(side=tk.LEFT, padx=(0, 15))
         ModernButton(button_frame, "✅ Finish", self._finish, "success").pack(side=tk.LEFT)
 
+    # Action methods remain the same
     def _similarity_analysis(self):
         try:
             self.result = "similarity"
@@ -553,7 +562,7 @@ class CompletionDialog:
                     subprocess.run(['open' if os.uname().sysname == 'Darwin' else 'xdg-open', str(self.output_file)])
             except Exception as e:
                 if self.modal:
-                    self.modal.after(0, lambda: messagebox.showerror("Error", f"{ERROR_MESSAGES['FILE_OPEN_ERROR']} {e}"))
+                    self.modal.after(0, lambda: messagebox.showerror("Error", f"Could not open file: {e}"))
 
         threading.Thread(target=open_file_async, daemon=True).start()
 
@@ -575,38 +584,50 @@ class CompletionDialog:
 
 
 class OptionsModal:
-    """Analysis options configuration dialog"""
+    """Analysis options configuration dialog - Updated for flexible pipeline"""
 
     def __init__(self, parent, current_options=None):
         self.parent = parent
         self.result = None
         self.current_options = current_options or {}
-    
+
         # Get current options, ensuring gene_ids state is properly synced
         opts = self.current_options
-        self.protparam_var = tk.BooleanVar(value=opts.get('protparam', True))
-        self.blast_var = tk.BooleanVar(value=opts.get('blast', False))
-        self.amino_acid_var = tk.BooleanVar(value=opts.get('amino_acid', False))
-        self.pdb_var = tk.BooleanVar(value=opts.get('pdb_search', False))
-        self.safe_mode_var = tk.BooleanVar(value=opts.get('safe_mode', True))
-        # This will now properly reflect the current GUI state
+        
+        # Gene ID mode
         self.gene_id_var = tk.BooleanVar(value=opts.get('use_gene_ids', False))
+        
+        # Human-specific analyses (only available with gene IDs)
+        self.compartments_var = tk.BooleanVar(value=opts.get('compartments', False))
+        self.hpa_var = tk.BooleanVar(value=opts.get('hpa', False))
+        
+        # UniProt-dependent analyses
+        self.uniprot_var = tk.BooleanVar(value=opts.get('uniprot', False))
+        self.protparam_var = tk.BooleanVar(value=opts.get('protparam', False))
+        self.amino_acid_var = tk.BooleanVar(value=opts.get('amino_acid', False))
+        self.blast_var = tk.BooleanVar(value=opts.get('blast', False))
+        self.pdb_var = tk.BooleanVar(value=opts.get('pdb_search', False))
+        
+        # Settings
+        self.safe_mode_var = tk.BooleanVar(value=opts.get('safe_mode', True))
+    
+        # Store references to checkboxes for conditional enabling
+        self.compartments_cb = None
+        self.hpa_cb = None
+        self.uniprot_cb = None
+        self.protparam_cb = None
+        self.blast_cb = None
+        self.pdb_cb = None
+        self.amino_acid_cb = None
 
     def show(self):
         self.modal = tk.Toplevel(self.parent)
         self.modal.title("Analysis Options")
-        self.modal.geometry("550x650")
+        self.modal.geometry("550x700")
         self.modal.configure(bg=Theme.BG)
         self.modal.resizable(False, False)
         self.modal.transient(self.parent)
         self.modal.grab_set()
-
-        opts = self.current_options
-        self.protparam_var = tk.BooleanVar(value=opts.get('protparam', True))
-        self.blast_var = tk.BooleanVar(value=opts.get('blast', False))
-        self.amino_acid_var = tk.BooleanVar(value=opts.get('amino_acid', False))
-        self.pdb_var = tk.BooleanVar(value=opts.get('pdb_search', False))
-        self.safe_mode_var = tk.BooleanVar(value=opts.get('safe_mode', True))
 
         # Center on parent
         self.modal.update_idletasks()
@@ -631,21 +652,29 @@ class OptionsModal:
         content = tk.Frame(self.modal, bg=Theme.BG)
         content.pack(fill=tk.BOTH, expand=True, padx=20, pady=15)
 
-        # Basic section
-        basic = self._create_section(content, "Basic Analysis")
-        self._create_option(basic, "UniProt Data", "Core protein information", None, enabled=False)
-        self._create_option(basic, "ProtParam Analysis", "Molecular properties", self.protparam_var)
-        self._create_option(basic, "  └─ Amino Acid Details", "Detailed composition", self.amino_acid_var)
+        # Input Type section
+        input_section = self._create_section(content, "Input Type")
+        self._create_option(input_section, "Use Gene IDs", "Input contains gene symbols instead of UniProt IDs", self.gene_id_var)
 
-        # Advanced section
-        advanced = self._create_section(content, "Advanced Analysis")
-        self._create_option(advanced, "BLAST Search", "Slow: ~1-2 min/protein", self.blast_var, warning=True)
-        self._create_option(advanced, "PDB Structures", "3D structure data", self.pdb_var)
+        # Gene ID-Only Database Sources section
+        gene_only = self._create_section(content, "Gene ID-Only Sources (Human-Specific)")
+        self.compartments_cb = self._create_option(gene_only, "COMPARTMENTS", "Subcellular localization", self.compartments_var, return_checkbox=True)
+        self.hpa_cb = self._create_option(gene_only, "Human Protein Atlas", "Tissue expression data", self.hpa_var, return_checkbox=True)
 
-        # Settings section - modify this part
+        # UniProt-Dependent Database Sources section  
+        uniprot_section = self._create_section(content, "UniProt-Dependent Sources")
+        self.uniprot_cb = self._create_option(uniprot_section, "UniProt Data", "Core protein information", self.uniprot_var, return_checkbox=True)
+        self.protparam_cb = self._create_option(uniprot_section, "ProtParam Analysis", "Molecular properties", self.protparam_var, return_checkbox=True)
+        self.amino_acid_cb = self._create_option(uniprot_section, "  └─ Amino Acid Details", "Detailed composition", self.amino_acid_var, return_checkbox=True)
+        self.blast_cb = self._create_option(uniprot_section, "BLAST Search", "Slow: ~1-2 min/protein", self.blast_var, warning=True, return_checkbox=True)
+        self.pdb_cb = self._create_option(uniprot_section, "PDB Structures", "3D structure data", self.pdb_var, return_checkbox=True)
+
+        # Settings section
         settings = self._create_section(content, "Settings")
         self._create_option(settings, "Safe Mode", "Preserve existing data", self.safe_mode_var)
-        self._create_option(settings, "Use Gene IDs", "Input uses gene names instead of UniProt IDs", self.gene_id_var)
+
+        # Set up conditional enabling
+        self._setup_conditional_enabling()
 
         # Buttons
         btn_frame = tk.Frame(self.modal, bg=Theme.BG)
@@ -668,18 +697,19 @@ class OptionsModal:
         content.pack(fill=tk.X, padx=10, pady=8)
         return content
 
-    def _create_option(self, parent, text, desc, variable, enabled=True, warning=False):
+    def _create_option(self, parent, text, desc, variable, enabled=True, warning=False, return_checkbox=False):
         frame = tk.Frame(parent, bg=Theme.SECONDARY)
         frame.pack(fill=tk.X, pady=2)
 
+        checkbox = None
         if variable:
             style = ttk.Style()
             style.configure('Option.TCheckbutton', background=Theme.SECONDARY,
-                          foreground=Theme.TEXT, focuscolor='none')
+                        foreground=Theme.TEXT, focuscolor='none')
 
-            cb = ttk.Checkbutton(frame, text=text, variable=variable, style='Option.TCheckbutton',
-                               state="normal" if enabled else "disabled")
-            cb.pack(side=tk.LEFT, anchor="w")
+            checkbox = ttk.Checkbutton(frame, text=text, variable=variable, style='Option.TCheckbutton',
+                            state="normal" if enabled else "disabled")
+            checkbox.pack(side=tk.LEFT, anchor="w")
         else:
             tk.Label(frame, text=text, font=("Segoe UI", 10, "bold"),
                     fg=Theme.GREEN, bg=Theme.SECONDARY).pack(side=tk.LEFT, anchor="w")
@@ -687,23 +717,102 @@ class OptionsModal:
         desc_color = Theme.RED if warning else Theme.TEXT_MUTED
         tk.Label(frame, text=desc, font=("Segoe UI", 9), fg=desc_color, bg=Theme.SECONDARY,
                 wraplength=300, justify=tk.LEFT).pack(side=tk.LEFT, padx=(10, 0), anchor="w")
+    
+        # Return checkbox if requested
+        if return_checkbox:
+            return checkbox
+        
+    def _setup_conditional_enabling(self):
+        """Set up conditional enabling based on input type and dependencies"""
+        def on_gene_id_change(*args):
+            gene_ids_enabled = self.gene_id_var.get()
+        
+            # Enable/disable gene ID-only analyses
+            if self.compartments_cb and self.hpa_cb:
+                if gene_ids_enabled:
+                    self.compartments_cb.config(state="normal")
+                    self.hpa_cb.config(state="normal")
+                else:
+                    self.compartments_cb.config(state="disabled")
+                    self.hpa_cb.config(state="disabled")
+                    # Uncheck gene ID-only options when disabled
+                    self.compartments_var.set(False)
+                    self.hpa_var.set(False)
+    
+        def on_uniprot_change(*args):
+            """Enable/disable UniProt-dependent analyses"""
+            uniprot_enabled = self.uniprot_var.get()
+            
+            # ProtParam, BLAST, and PDB depend on UniProt data
+            if self.protparam_cb:
+                if uniprot_enabled:
+                    self.protparam_cb.config(state="normal")
+                else:
+                    self.protparam_cb.config(state="disabled")
+                    self.protparam_var.set(False)
+                    # Also disable amino acid details when ProtParam is disabled
+                    on_protparam_change()
+            
+            if self.blast_cb:
+                if uniprot_enabled:
+                    self.blast_cb.config(state="normal")
+                else:
+                    self.blast_cb.config(state="disabled") 
+                    self.blast_var.set(False)
+            
+            if self.pdb_cb:
+                if uniprot_enabled:
+                    self.pdb_cb.config(state="normal")
+                else:
+                    self.pdb_cb.config(state="disabled")
+                    self.pdb_var.set(False)
+        
+        def on_protparam_change(*args):
+            """Enable/disable amino acid details based on ProtParam"""
+            protparam_enabled = self.protparam_var.get()
+            uniprot_enabled = self.uniprot_var.get()
+            
+            # Amino acid details require both UniProt (for sequence) and ProtParam (for analysis)
+            if self.amino_acid_cb:
+                if uniprot_enabled and protparam_enabled:
+                    self.amino_acid_cb.config(state="normal")
+                else:
+                    self.amino_acid_cb.config(state="disabled")
+                    self.amino_acid_var.set(False)
+    
+        # Set up traces to monitor changes
+        self.gene_id_var.trace('w', on_gene_id_change)
+        self.uniprot_var.trace('w', on_uniprot_change)
+        self.protparam_var.trace('w', on_protparam_change)
+    
+        # Set initial state
+        on_gene_id_change()
+        on_uniprot_change()
+        on_protparam_change()
 
     def _apply(self):
         self.result = {
-            'uniprot': True,
+            'use_gene_ids': self.gene_id_var.get(),
+            
+            # Gene ID-only analyses
+            'compartments': self.compartments_var.get(),
+            'hpa': self.hpa_var.get(),
+            
+            # UniProt-dependent analyses
+            'uniprot': self.uniprot_var.get(),
             'protparam': self.protparam_var.get(),
-            'blast': self.blast_var.get(),
             'amino_acid': self.amino_acid_var.get() and self.protparam_var.get(),
+            'blast': self.blast_var.get(),
             'pdb_search': self.pdb_var.get(),
-            'safe_mode': self.safe_mode_var.get(),
-            'use_gene_ids': self.gene_id_var.get()  # NEW
+            
+            # Settings
+            'safe_mode': self.safe_mode_var.get()
         }
         self.modal.destroy()
 
     def _cancel(self):
         self.result = None
         self.modal.destroy()
-
 
 class ProtMergeGUI:
     """Main ProtMerge GUI with integrated features"""
@@ -1259,10 +1368,26 @@ class ProtMergeGUI:
     # =============================================================================
 
     def _start_analysis(self):
-        """Start new protein analysis"""
+        """Start new protein analysis with validation"""
+        # Validate configuration first
+        if not self._show_analysis_validation():
+            return
+    
+        # Show BLAST warning if applicable
         if self.current_options.get('blast') and not messagebox.askyesno(
             "BLAST Warning", "BLAST is slow (~1-2 min/protein). Continue?"):
             return
+    
+        # Show gene conversion warning if applicable
+        if (self.current_options.get('use_gene_ids') and 
+            self._has_uniprot_dependent_analyses(self.current_options)):
+            gene_conversion_msg = (
+                "Gene ID to UniProt conversion will be performed for UniProt-dependent analyses.\n"
+                "This may not work for all gene symbols.\n\n"
+                "Continue with analysis?"
+            )
+            if not messagebox.askyesno("Gene Conversion Notice", gene_conversion_msg):
+                return
 
         self.logger.info("Starting analysis thread...")
         self._show_progress()
@@ -1270,6 +1395,11 @@ class ProtMergeGUI:
         analysis_thread = threading.Thread(target=self._run_analysis, daemon=True)
         analysis_thread.start()
         self.logger.info("Analysis thread started")
+
+    def _has_uniprot_dependent_analyses(self, options):
+        """Check if any UniProt-dependent analyses are requested"""
+        uniprot_dependent = ['uniprot', 'protparam', 'blast', 'pdb_search']
+        return any(options.get(analysis, False) for analysis in uniprot_dependent)
 
     def _show_progress(self):
         """Show progress section"""
@@ -1286,7 +1416,7 @@ class ProtMergeGUI:
         self.root.update_idletasks()
 
     def _run_analysis(self):
-        """Run analysis in background thread"""
+        """Run analysis in background thread - ensure summary is passed correctly"""
         try:
             def progress_callback(pct, main_text, detail_text=""):
                 adjusted_progress = self._calculate_smooth_progress(pct, main_text)
@@ -1297,7 +1427,13 @@ class ProtMergeGUI:
                 self.current_options, progress_callback
             )
 
+            # Get the analysis summary from the app
             analysis_summary = self.app.get_analysis_summary()
+        
+            # Debug logging
+            self.logger.info(f"Analysis complete. Summary: {analysis_summary}")
+        
+            # Show completion with actual summary
             self.root.after(0, self._show_completion, output_file, analysis_summary)
 
         except Exception as e:
@@ -1364,10 +1500,14 @@ class ProtMergeGUI:
             self.logger.error(f"Progress update error: {e}")
 
     def _show_completion(self, output_file, analysis_summary):
-        """Show completion dialog with options"""
+        """Show completion dialog with accurate analysis summary"""
         # Hide progress first
         self._hide_progress()
 
+        # Debug logging to verify summary data
+        self.logger.info(f"Showing completion dialog with summary: {analysis_summary}")
+
+        # Create completion dialog with actual analysis summary
         self.completion_dialog = CompletionDialog(self.root, output_file, analysis_summary)
         action = self.completion_dialog.show()
 
@@ -1376,16 +1516,15 @@ class ProtMergeGUI:
 
         if action == "similarity":
             self._launch_similarity_on_file(output_file)
-            self._reset_for_new_analysis() # Go back to new analysis screen after launching similarity
+            self._reset_for_new_analysis()
         elif action == "view_results":
             self._open_file(output_file)
-            self._reset_for_new_analysis() # Go back to new analysis screen
+            self._reset_for_new_analysis()
         elif action == "data_viewer":
             self._show_data_viewer(output_file)
-            # Data viewer handles returning focus, do not reset main GUI state here
         elif action == "export_options":
             self._show_export_options(output_file)
-            self._reset_for_new_analysis() # Go back to new analysis screen
+            self._reset_for_new_analysis()
         elif action == "new_analysis":
             self._reset_for_new_analysis()
         elif action == "finish":
@@ -1629,28 +1768,94 @@ class ProtMergeGUI:
             self._update_start_button()
 
     def _update_options_summary(self):
-        """Update options summary display"""
-        opts = []
+        """Update options summary display - Clearer breakdown by analysis type"""
+        gene_id_analyses = []
+        uniprot_analyses = []
+    
+        # Separate analyses by type and dependency
+        if self.current_options.get('compartments'):
+            gene_id_analyses.append("COMPARTMENTS")
+        if self.current_options.get('hpa'):
+            gene_id_analyses.append("HPA")
+    
+        if self.current_options.get('uniprot'):
+            uniprot_analyses.append("UniProt")
         if self.current_options.get('protparam'):
-            opts.append("ProtParam")
+            uniprot_analyses.append("ProtParam")
             if self.current_options.get('amino_acid'):
-                opts.append("AminoAcids")
+                uniprot_analyses.append("AA-Details")
         if self.current_options.get('blast'):
-            opts.append("BLAST")
+            uniprot_analyses.append("BLAST")
         if self.current_options.get('pdb_search'):
-            opts.append("PDB")
+            uniprot_analyses.append("PDB")
 
-        summary = f"UniProt + {' + '.join(opts)}" if opts else "UniProt only"
+        # Build clearer summary string
+        summary_parts = []
     
-        # Add gene ID mode indicator
-        if self.current_options.get('use_gene_ids'):
-            summary = f"Gene→{summary}"
+        # Show input mode clearly
+        input_mode = "Gene IDs" if self.current_options.get('use_gene_ids') else "UniProt IDs"
     
+        if gene_id_analyses and uniprot_analyses:
+            summary = f"{input_mode}: {' + '.join(gene_id_analyses)} → UniProt: {' + '.join(uniprot_analyses)}"
+        elif gene_id_analyses:
+            summary = f"{input_mode}: {' + '.join(gene_id_analyses)} only"
+        elif uniprot_analyses:
+            summary = f"{input_mode}: {' + '.join(uniprot_analyses)}"
+        else:
+            summary = f"{input_mode}: No analyses selected"
+
+        # Add mode indicators
         if self.current_options.get('safe_mode'):
-            summary += " [Safe]"
+            summary += " [Safe Mode]"
 
         if hasattr(self, 'options_summary'):
             self.options_summary.config(text=summary)
+
+    def _validate_analysis_options(self, options):
+        """Validate that analysis options make sense together"""
+        warnings = []
+    
+        # Check for gene ID-only analyses with UniProt input
+        if not options.get('use_gene_ids', False):
+            if options.get('compartments', False):
+                warnings.append("COMPARTMENTS analysis requires gene IDs as input")
+            if options.get('hpa', False):
+                warnings.append("HPA analysis requires gene IDs as input")
+    
+        # Check for UniProt-dependent analyses without UniProt
+        if not options.get('uniprot', False):
+            if options.get('protparam', False):
+                warnings.append("ProtParam analysis requires UniProt data (sequences)")
+            if options.get('blast', False):
+                warnings.append("BLAST analysis requires UniProt data (sequences)")
+            if options.get('pdb_search', False):
+                warnings.append("PDB search requires UniProt data (protein IDs)")
+            if options.get('amino_acid', False):
+                warnings.append("Amino acid analysis requires UniProt data")
+    
+        # Check for ProtParam-dependent analyses without ProtParam
+        if options.get('amino_acid', False) and not options.get('protparam', False):
+            warnings.append("Amino acid details require ProtParam analysis to be enabled")
+    
+        # Check if no analyses are selected
+        all_analyses = ['uniprot', 'protparam', 'blast', 'pdb_search', 'compartments', 'hpa']
+        if not any(options.get(analysis, False) for analysis in all_analyses):
+            warnings.append("No analyses selected - no data will be collected")
+    
+        return warnings
+    
+    def _show_analysis_validation(self):
+        """Show validation warnings before starting analysis"""
+        warnings = self._validate_analysis_options(self.current_options)
+    
+        if warnings:
+            warning_text = "Analysis Configuration Warnings:\n\n" + "\n".join(f"• {w}" for w in warnings)
+            warning_text += "\n\nContinue anyway?"
+        
+            if not messagebox.askyesno("Configuration Warning", warning_text):
+                return False
+    
+        return True
 
     def _update_start_button(self):
         """Update start button state"""

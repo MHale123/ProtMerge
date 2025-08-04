@@ -31,100 +31,235 @@ class ProtMerge:
         gui.run()
     
     def run_analysis(self, input_file, sheet_name, column_index, options, progress_callback=None):
-        """Run complete analysis pipeline"""
+        """Run complete analysis pipeline with flexible dependency handling"""
         try:
             self.logger.info(f"Starting analysis for {Path(input_file).name}")
-        
+    
             # Load data
             if progress_callback:
                 progress_callback(0, "Loading data", f"Reading {Path(input_file).name}")
-        
+    
             data = self.data_handler.load_excel_data(
                 input_file, sheet_name, column_index, options.get('safe_mode', True)
             )
-        
+    
             protein_count = len(data['results'])
             self.logger.info(f"Loaded {protein_count} proteins for analysis")
-        
-            # NEW: Check if we need to convert gene IDs to UniProt IDs
-            if options.get('use_gene_ids', False):
+            
+            # Determine input type and required analyses
+            using_gene_ids = options.get('use_gene_ids', False)
+            needs_uniprot_conversion = self._needs_uniprot_conversion(options, using_gene_ids)
+            
+            self.logger.info(f"Input type: {'Gene IDs' if using_gene_ids else 'UniProt IDs'}")
+            self.logger.info(f"UniProt conversion needed: {needs_uniprot_conversion}")
+            
+            # Phase 1: Human-specific analysis (for gene IDs only)
+            if using_gene_ids and self._has_human_analyses(options):
                 if progress_callback:
-                    progress_callback(2, "Converting Gene IDs", "Converting gene names to UniProt IDs")
+                    progress_callback(5, "Running human protein analysis", "Analyzing human-specific databases")
+                
+                self.logger.info("Running human-specific analysis before any conversion...")
+                data = self.analyzer_manager.run_human_protein_analysis(data, options, progress_callback)
+                
+                # Log human analysis results
+                self._log_human_analysis_results(data['results'], options, protein_count)
             
-                self.logger.info("Converting gene IDs to UniProt IDs...")
+            # Phase 2: Gene to UniProt conversion (only if needed for downstream analyses)
+            if using_gene_ids and needs_uniprot_conversion:
+                start_progress = 25 if self._has_human_analyses(options) else 5
+                if progress_callback:
+                    progress_callback(start_progress, "Converting Gene IDs", "Converting gene names to UniProt IDs for downstream analyses")
+        
+                self.logger.info("Converting gene IDs to UniProt IDs for UniProt-dependent analyses...")
                 data = self.analyzer_manager.run_gene_conversion(data, progress_callback)
-            
+        
                 # Count successful conversions
                 converted_count = sum(1 for _, row in data['results'].iterrows() 
                                     if row.get('Original_Gene_ID', '') and 
                                         row.get('UniProt_ID', '') != row.get('Original_Gene_ID', ''))
-            
+        
                 self.logger.info(f"Gene conversion: {converted_count}/{protein_count} successful")
-        
-            # Run analyses (existing code)
-            if progress_callback:
-                start_progress = 10 if options.get('use_gene_ids', False) else 5
-                progress_callback(start_progress, "Running analyses", "Starting protein data collection")
-        
-            results = self.analyzer_manager.run_all_analyses(data, options, progress_callback)
-        
+            
+            # Phase 3: UniProt-dependent analyses (only if requested and conversion successful/not needed)
+            uniprot_analyses_requested = self._has_uniprot_dependent_analyses(options)
+            
+            if uniprot_analyses_requested:
+                # Check if we have UniProt IDs to work with
+                has_uniprot_ids = self._has_valid_uniprot_ids(data['results'], using_gene_ids)
+                
+                if has_uniprot_ids:
+                    # Calculate starting progress
+                    if using_gene_ids and needs_uniprot_conversion:
+                        start_progress = 45 if self._has_human_analyses(options) else 25
+                    elif using_gene_ids:
+                        start_progress = 25 if self._has_human_analyses(options) else 5
+                    else:
+                        start_progress = 5
+                
+                    if progress_callback:
+                        progress_callback(start_progress, "Running UniProt-dependent analyses", "Starting protein data collection")
+            
+                    results = self.analyzer_manager.run_uniprot_analyses(data, options, progress_callback)
+                else:
+                    self.logger.warning("No valid UniProt IDs available for UniProt-dependent analyses")
+                    results = data['results']
+                    # Still initialize columns for consistency
+                    self.analyzer_manager._initialize_uniprot_columns(results, options)
+            else:
+                self.logger.info("No UniProt-dependent analyses requested")
+                results = data['results']
+    
             # Calculate analysis summary
             self.analysis_summary = self._calculate_analysis_summary(results, options)
-        
+    
             # Save results
             if progress_callback:
                 progress_callback(98, "Saving results", "Creating Excel file")
-        
+    
             output_file = self.excel_formatter.save_results(input_file, results, options)
-        
+    
             # Log completion summary
             self._log_completion_summary(output_file, results, options)
-        
+    
             if progress_callback:
                 progress_callback(100, "Analysis complete", "Results saved successfully")
-        
+    
             return output_file
-        
+    
         except Exception as e:
             self.logger.error(f"Analysis pipeline failed: {e}")
             raise
+    
+    def _needs_uniprot_conversion(self, options, using_gene_ids):
+        """Determine if UniProt conversion is needed based on requested analyses"""
+        if not using_gene_ids:
+            return False  # Already have UniProt IDs
+        
+        # Check if any UniProt-dependent analyses are requested
+        return self._has_uniprot_dependent_analyses(options)
+    
+    def _has_uniprot_dependent_analyses(self, options):
+        """Check if any UniProt-dependent analyses are requested"""
+        uniprot_dependent = [
+            'uniprot',      # UniProt data itself
+            'protparam',    # Needs sequence from UniProt
+            'blast',        # Needs sequence from UniProt
+            'pdb_search'    # Needs UniProt ID for PDB search
+        ]
+        
+        return any(options.get(analysis, False) for analysis in uniprot_dependent)
+    
+    def _has_human_analyses(self, options):
+        """Check if human-specific analyses are requested"""
+        return options.get('compartments', False) or options.get('hpa', False)
+    
+    def _has_valid_uniprot_ids(self, results, using_gene_ids):
+        """Check if we have valid UniProt IDs to work with"""
+        if using_gene_ids:
+            # Check if conversion was successful for at least some entries
+            valid_count = sum(1 for _, row in results.iterrows() 
+                            if row.get('UniProt_ID', '') and 
+                               row.get('UniProt_ID', '') != row.get('Original_Gene_ID', '') and
+                               row.get('UniProt_ID', '') not in ['', 'NO VALUE FOUND'])
+            return valid_count > 0
+        else:
+            # Already using UniProt IDs
+            valid_count = sum(1 for _, row in results.iterrows() 
+                            if row.get('UniProt_ID', '') and 
+                               row.get('UniProt_ID', '') not in ['', 'NO VALUE FOUND'])
+            return valid_count > 0
+    
+    def _log_human_analysis_results(self, results, options, protein_count):
+        """Log human analysis results - Fixed to use correct column names"""
+        if options.get('compartments', False):
+            # Use the correct column name from human_protein_analyzer.py
+            compartments_complete = sum(1 for _, row in results.iterrows() 
+                                    if self._is_data_complete(row.get('compartments_primary_location', '')))
+            self.logger.info(f"COMPARTMENTS analysis: {compartments_complete}/{protein_count} successful")
+    
+        if options.get('hpa', False):
+            # Use the correct column name from human_protein_analyzer.py
+            hpa_complete = sum(1 for _, row in results.iterrows() 
+                            if self._is_data_complete(row.get('hpa_primary_tissue', '')))
+            self.logger.info(f"HPA analysis: {hpa_complete}/{protein_count} successful")
     
     def get_analysis_summary(self):
         """Get analysis summary for completion dialog"""
         return self.analysis_summary or {}
     
     def _calculate_analysis_summary(self, results, options):
-        """Calculate analysis summary statistics"""
+        """Calculate analysis summary statistics - Fixed to use correct column names"""
         try:
             total_proteins = len(results)
+            summary = {'total_proteins': total_proteins}
+    
+            # Count data completeness only for analyses that were actually requested
+        
+            # UniProt analysis - check for function data (core UniProt field)
+            if options.get('uniprot', False):
+                uniprot_complete = sum(1 for _, row in results.iterrows() 
+                                    if self._is_data_complete(row.get('function', '')))
+                summary['uniprot_complete'] = uniprot_complete
+                summary['uniprot_percent'] = (uniprot_complete / total_proteins) * 100 if total_proteins > 0 else 0
+        
+            # ProtParam analysis - check for molecular weight data
+            if options.get('protparam', False):
+                protparam_complete = sum(1 for _, row in results.iterrows() 
+                                    if self._is_data_complete(row.get('mw', '')))
+                summary['protparam_complete'] = protparam_complete
+                summary['protparam_percent'] = (protparam_complete / total_proteins) * 100 if total_proteins > 0 else 0
             
-            # Count data completeness
-            uniprot_complete = sum(1 for _, row in results.iterrows() 
-                                 if self._is_data_complete(row.get('function', '')))
+            # BLAST analysis - check for identity data
+            if options.get('blast', False):
+                blast_complete = sum(1 for _, row in results.iterrows() 
+                                if self._is_data_complete(row.get('identity', '')))
+                summary['blast_complete'] = blast_complete
+                summary['blast_percent'] = (blast_complete / total_proteins) * 100 if total_proteins > 0 else 0
             
-            protparam_complete = sum(1 for _, row in results.iterrows() 
-                                   if self._is_data_complete(row.get('mw', '')))
-            
-            blast_complete = sum(1 for _, row in results.iterrows() 
-                               if self._is_data_complete(row.get('identity', '')))
-            
-            pdb_complete = sum(1 for _, row in results.iterrows() 
-                             if self._is_data_complete(row.get('structure_count', ''), check_zero=True))
-            
-            summary = {
-                'total_proteins': total_proteins,
-                'uniprot_complete': uniprot_complete,
-                'uniprot_percent': (uniprot_complete / total_proteins) * 100 if total_proteins > 0 else 0,
-                'protparam_complete': protparam_complete if options.get('protparam', False) else 0,
-                'protparam_percent': (protparam_complete / total_proteins) * 100 if total_proteins > 0 else 0,
-                'blast_complete': blast_complete if options.get('blast', False) else 0,
-                'blast_percent': (blast_complete / total_proteins) * 100 if total_proteins > 0 else 0,
-                'pdb_complete': pdb_complete if options.get('pdb_search', False) else 0,
-                'pdb_percent': (pdb_complete / total_proteins) * 100 if total_proteins > 0 else 0
-            }
-            
+            # PDB analysis - check for structure count (should be > 0)
+            if options.get('pdb_search', False):
+                pdb_complete = sum(1 for _, row in results.iterrows() 
+                                if self._is_data_complete(row.get('structure_count', ''), check_zero=True))
+                summary['pdb_complete'] = pdb_complete
+                summary['pdb_percent'] = (pdb_complete / total_proteins) * 100 if total_proteins > 0 else 0
+    
+            # FIXED: Human protein analyses - use correct column names
+            if options.get('compartments', False):
+                # Check the actual COMPARTMENTS column name from human_protein_analyzer.py
+                compartments_complete = sum(1 for _, row in results.iterrows() 
+                                        if self._is_data_complete(row.get('compartments_primary_location', '')))
+                summary['compartments_complete'] = compartments_complete
+                summary['compartments_percent'] = (compartments_complete / total_proteins) * 100 if total_proteins > 0 else 0
+    
+            if options.get('hpa', False):
+                # Check the actual HPA column name from human_protein_analyzer.py
+                hpa_complete = sum(1 for _, row in results.iterrows() 
+                                if self._is_data_complete(row.get('hpa_primary_tissue', '')))
+                summary['hpa_complete'] = hpa_complete
+                summary['hpa_percent'] = (hpa_complete / total_proteins) * 100 if total_proteins > 0 else 0
+    
+            # Set to 0 for analyses that weren't requested (to avoid showing in completion dialog)
+            if not options.get('uniprot', False):
+                summary['uniprot_complete'] = 0
+                summary['uniprot_percent'] = 0
+            if not options.get('protparam', False):
+                summary['protparam_complete'] = 0
+                summary['protparam_percent'] = 0
+            if not options.get('blast', False):
+                summary['blast_complete'] = 0
+                summary['blast_percent'] = 0
+            if not options.get('pdb_search', False):
+                summary['pdb_complete'] = 0
+                summary['pdb_percent'] = 0
+            if not options.get('compartments', False):
+                summary['compartments_complete'] = 0
+                summary['compartments_percent'] = 0
+            if not options.get('hpa', False):
+                summary['hpa_complete'] = 0
+                summary['hpa_percent'] = 0
+    
             return summary
-            
+    
         except Exception as e:
             self.logger.error(f"Error calculating analysis summary: {e}")
             return {
@@ -136,7 +271,11 @@ class ProtMerge:
                 'blast_complete': 0,
                 'blast_percent': 0,
                 'pdb_complete': 0,
-                'pdb_percent': 0
+                'pdb_percent': 0,
+                'compartments_complete': 0,
+                'compartments_percent': 0,
+                'hpa_complete': 0,
+                'hpa_percent': 0
             }
     
     def _is_data_complete(self, value, check_zero=False):
@@ -161,39 +300,66 @@ class ProtMerge:
         return True
     
     def _log_completion_summary(self, output_file, results, options):
-        """Log analysis completion summary"""
+        """Log analysis completion summary - Fixed to only show analyses that were actually run"""
         try:
             summary = self.analysis_summary
-            
+        
             self.logger.info("=" * 60)
             self.logger.info("ANALYSIS COMPLETION SUMMARY")
             self.logger.info("=" * 60)
             self.logger.info(f"Total proteins analyzed: {summary['total_proteins']}")
-            self.logger.info(f"UniProt data: {summary['uniprot_complete']}/{summary['total_proteins']} ({summary['uniprot_percent']:.1f}%)")
             
-            if options.get('protparam', False):
-                self.logger.info(f"ProtParam data: {summary['protparam_complete']}/{summary['total_proteins']} ({summary['protparam_percent']:.1f}%)")
+            # Create lists to track what was actually run vs requested
+            analyses_run = []
+            analyses_skipped = []
+        
+            # Check each analysis type
+            analysis_checks = [
+                ('compartments', 'COMPARTMENTS', 'compartments_complete', 'compartments_percent'),
+                ('hpa', 'Human Protein Atlas', 'hpa_complete', 'hpa_percent'),
+                ('uniprot', 'UniProt', 'uniprot_complete', 'uniprot_percent'),
+                ('protparam', 'ProtParam', 'protparam_complete', 'protparam_percent'),
+                ('blast', 'BLAST', 'blast_complete', 'blast_percent'),
+                ('pdb_search', 'PDB Structures', 'pdb_complete', 'pdb_percent')
+            ]
             
-            if options.get('blast', False):
-                self.logger.info(f"BLAST data: {summary['blast_complete']}/{summary['total_proteins']} ({summary['blast_percent']:.1f}%)")
+            for option_key, display_name, complete_key, percent_key in analysis_checks:
+                if options.get(option_key, False):
+                    complete_count = summary[complete_key]
+                    percent = summary[percent_key]
+                    self.logger.info(f"{display_name}: {complete_count}/{summary['total_proteins']} ({percent:.1f}%)")
+                    analyses_run.append(display_name)
+                    
+                    if complete_count == 0:
+                        analyses_skipped.append(f"{display_name} (0 successful)")
+                else:
+                    # Analysis was not requested, don't log it
+                    pass
             
-            if options.get('pdb_search', False):
-                self.logger.info(f"PDB structures: {summary['pdb_complete']}/{summary['total_proteins']} ({summary['pdb_percent']:.1f}%)")
+            # Summary of what was actually executed
+            if analyses_run:
+                self.logger.info(f"Analyses executed: {', '.join(analyses_run)}")
+            else:
+                self.logger.info("No analyses were executed")
             
+            # Warn about analyses that produced no data
+            if analyses_skipped:
+                self.logger.warning(f"Analyses with no successful results: {', '.join(analyses_skipped)}")
+        
             if output_file:
                 self.logger.info(f"Results saved to: {output_file}")
-                
-                # List created sheets
+            
+                # List actually created sheets
                 try:
                     from openpyxl import load_workbook
                     wb = load_workbook(output_file)
-                    sheets = [ws for ws in wb.sheetnames if any(name in ws for name in ['ProtMerge', 'Amino', 'PDB'])]
-                    self.logger.info(f"Excel sheets created: {', '.join(sheets)}")
+                    actual_sheets = [ws for ws in wb.sheetnames if any(name in ws for name in ['ProtMerge', 'Amino', 'PDB', 'Human', 'Similarity'])]
+                    self.logger.info(f"Excel sheets created: {', '.join(actual_sheets)}")
                 except Exception:
-                    pass
-            
+                    self.logger.info("Excel file created (sheet details unavailable)")
+        
             self.logger.info("=" * 60)
-            
+        
         except Exception as e:
             self.logger.error(f"Error generating completion summary: {e}")
     
@@ -267,52 +433,6 @@ def main():
         print(f"ProtMerge failed to start: {e}")
         logging.error(f"Fatal error: {e}")
         sys.exit(1)
-    
-    def _calculate_smooth_progress(self, raw_progress, main_text, options):
-        """Calculate smooth progress including gene conversion phase"""
-        stage = self._identify_stage(main_text.lower())
-    
-        stage_weights = {}
-        total_weight = 0
-    
-        # Add gene conversion stage if enabled
-        if options.get('use_gene_ids', False):
-            stage_weights['gene_conversion'] = 10
-            total_weight += 10
-    
-        # Existing stages with adjusted weights
-        stage_weights['uniprot'] = 35 if options.get('use_gene_ids', False) else 40
-        total_weight += stage_weights['uniprot']
-    
-        if options.get('protparam', False):
-            stage_weights['protparam'] = 25
-            total_weight += 25
-    
-        if options.get('blast', False):
-            stage_weights['blast'] = 20
-            total_weight += 20
-    
-        if options.get('pdb_search', False):
-            stage_weights['pdb'] = 10
-            total_weight += 10
-    
-        # Normalize weights and calculate progress
-        for s in stage_weights:
-            stage_weights[s] = (stage_weights[s] / total_weight) * 100
-    
-        # Calculate cumulative progress
-        cumulative = 0
-        stage_order = ['gene_conversion', 'uniprot', 'protparam', 'blast', 'pdb']
-    
-        for s in stage_order:
-            if s in stage_weights:
-                if s == stage:
-                    stage_progress = min(max(raw_progress, 0), 100) / 100
-                    return min(cumulative + (stage_weights[s] * stage_progress), 99)
-                elif stage_order.index(s) < stage_order.index(stage):
-                    cumulative += stage_weights[s]
-    
-        return min(max(raw_progress, 0), 99)
 
 if __name__ == "__main__":
     main()

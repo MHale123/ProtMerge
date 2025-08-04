@@ -11,7 +11,7 @@ import pandas as pd
 from config import *
 
 class AnalyzerManager:
-    """Manages all protein analyzers"""
+    """Manages all protein analyzers with flexible dependency handling"""
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
@@ -22,33 +22,110 @@ class AnalyzerManager:
             'pdb': PDBAnalyzer()
             # Note: similarity analyzer is loaded on-demand
         }
-        self.logger.info("AnalyzerManager initialized")
     
-    def run_all_analyses(self, data, options, progress_callback=None):
-        """Run all selected analyses"""
+        # Initialize human protein analyzer manager
+        self.human_analyzer = None
+        try:
+            from human_protein_analyzer import HumanProteinAnalyzerManager
+            self.human_analyzer = HumanProteinAnalyzerManager()
+            self.logger.info("Human protein analyzer initialized")
+        except ImportError as e:
+            self.logger.warning(f"Human protein analyzer not available: {e}")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize human protein analyzer: {e}")
+    
+        self.logger.info("AnalyzerManager initialized with flexible pipeline")
+    
+    def run_uniprot_analyses(self, data, options, progress_callback=None):
+        """Run only UniProt-dependent analyses"""
         results = data['results']
         
+        # Initialize UniProt columns
+        self._initialize_uniprot_columns(results, options)
+        
+        # Run UniProt analysis if requested
         if options.get('uniprot', True):
             if progress_callback:
                 progress_callback(10, "Fetching UniProt data", "Retrieving protein information")
             self.analyzers['uniprot'].analyze(results, options, progress_callback)
         
+        # Run ProtParam analysis if requested (depends on sequence from UniProt)
         if options.get('protparam', False):
             if progress_callback:
                 progress_callback(50, "Running ProtParam analysis", "Calculating molecular properties")
             self.analyzers['protparam'].analyze(results, options, progress_callback)
         
+        # Run BLAST analysis if requested (depends on sequence from UniProt)
         if options.get('blast', False):
             if progress_callback:
                 progress_callback(75, "Running BLAST analysis", "Searching for similar proteins")
             self.analyzers['blast'].analyze(results, options, progress_callback)
         
+        # Run PDB search if requested (uses UniProt ID)
         if options.get('pdb_search', False):
             if progress_callback:
                 progress_callback(85, "Searching PDB structures", "Finding structural information")
             self.analyzers['pdb'].analyze(results, options, progress_callback)
         
         return results
+    
+    def _initialize_uniprot_columns(self, results, options):
+        """Initialize columns for UniProt-dependent analyses"""
+        # Basic UniProt columns
+        uniprot_columns = ['organism', 'gene_name', 'function', 'sequence', 'environment', 'keywords', 'structure', 'alphafold']
+        for col in uniprot_columns:
+            if col not in results.columns:
+                results[col] = "NO VALUE FOUND"
+        
+        # ProtParam columns
+        if options.get('protparam', False):
+            protparam_columns = ['mw', 'pi', 'gravy', 'ext']
+            for col in protparam_columns:
+                if col not in results.columns:
+                    results[col] = "NO VALUE FOUND"
+            
+            # Amino acid columns if requested
+            if options.get('amino_acid', False):
+                for col in AMINO_ACID_COLUMNS.keys():
+                    if col not in results.columns:
+                        results[col] = "NO VALUE FOUND"
+        
+        # BLAST columns
+        if options.get('blast', False):
+            blast_columns = ['similar', 'identity', 'evalue', 'align']
+            for col in blast_columns:
+                if col not in results.columns:
+                    results[col] = "NO VALUE FOUND"
+        
+        # PDB columns
+        if options.get('pdb_search', False):
+            pdb_columns = ['structure_count', 'best_resolution', 'structure_methods', 'complex_info',
+                          'pdb_ids', 'best_structure', 'ligand_info', 'structure_quality']
+            for col in pdb_columns:
+                if col not in results.columns:
+                    results[col] = "NO VALUE FOUND"
+    
+    def run_human_protein_analysis(self, data, options, progress_callback=None):
+        """Run human-specific protein analysis before gene conversion"""
+        if not self.human_analyzer:
+            self.logger.warning("Human protein analyzer not available, skipping human analysis")
+            return data
+    
+        try:
+            if progress_callback:
+                progress_callback(2, "Running human protein analysis", "Analyzing human-specific databases")
+        
+            # Run the human analysis
+            analyzed_results = self.human_analyzer.run_human_analysis(data, options, progress_callback)
+        
+            # Return updated data structure
+            return {'results': analyzed_results, **{k: v for k, v in data.items() if k != 'results'}}
+        
+        except Exception as e:
+            self.logger.error(f"Human protein analysis failed: {e}")
+            # Don't fail the entire analysis, just skip human analysis and continue
+            self.logger.warning("Continuing with standard analysis pipeline")
+            return data
     
     def run_similarity_analysis(self, data, central_protein_id, custom_weights, progress_callback=None):
         """Run similarity analysis with custom parameters"""
