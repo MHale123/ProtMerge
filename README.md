@@ -8,7 +8,7 @@ ProtMerge automatically gathers comprehensive protein information from multiple 
 ### Simple Installation (WINDOWS)
 1. **Download this repository** (green "Code" button → "Download ZIP")
 2. **Extract the folder** anywhere on your computer
-3. **Run Protmerge.py** Using an IDE run ProtMerge.py and follow the GUI instructions.
+3. **Run Protmerge.py** Using an IDE run ProtMerge.py and follow the GUI instructions. EXE coming soon.
 
 The program will automatically install required packages (first time only) and launch ProtMerge.
 
