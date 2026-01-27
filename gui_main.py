@@ -69,7 +69,7 @@ class Theme:
     PURPLE = "#9c27b0"
     ORANGE = "#ff9800"
 
-class ModernButton(tk.Button):
+class ModernButton(tk.Label):  # Changed from tk.Button to tk.Label
     """Sleek modern button with hover animations and proper active state handling"""
 
     def __init__(self, parent, text, command=None, style="primary", size="normal", icon="", **kwargs):
@@ -103,6 +103,12 @@ class ModernButton(tk.Button):
                 "hover": Theme.TERTIARY,
                 "fg": Theme.TEXT_MUTED,
                 "active": Theme.TERTIARY
+            },
+            "warning": {  # Added this since it's used in your code
+                "bg": Theme.ORANGE,
+                "hover": "#fb8c00",
+                "fg": "white",
+                "active": Theme.ORANGE
             }
         }
 
@@ -120,6 +126,9 @@ class ModernButton(tk.Button):
         # Track if this is an active navigation button
         self.is_nav_active = False
 
+        # Store command for later
+        self.command = command
+
         # Add icon to text if provided
         display_text = f"{icon} {text}" if icon else text
 
@@ -127,13 +136,11 @@ class ModernButton(tk.Button):
             "bg": self.config_style["bg"],
             "fg": self.config_style["fg"],
             "font": self.size_config["font"],
-            "relief": "flat",
-            "borderwidth": 0,
+            "relief": "raised",  # Changed to look more button-like
+            "borderwidth": 1,
             "padx": self.size_config["padx"],
             "pady": self.size_config["pady"],
-            "cursor": "hand2",
-            "activebackground": self.config_style["active"],
-            "activeforeground": self.config_style["fg"]
+            "cursor": "hand2"
         }
 
         # Add any additional kwargs, allowing them to override defaults
@@ -142,16 +149,25 @@ class ModernButton(tk.Button):
         super().__init__(
             parent,
             text=display_text,
-            command=command,
             **button_kwargs
         )
 
+        # Bind events
+        self.bind("<Button-1>", self._on_click)
         self.bind("<Enter>", self._on_hover)
         self.bind("<Leave>", self._on_leave)
 
+    def _on_click(self, event):
+        """Handle click event"""
+        # Check if button is disabled using cget for Label
+        current_state = self.cget('state') if 'state' in self.keys() else 'normal'
+        if self.command and current_state != 'disabled':
+            self.command()
+
     def _on_hover(self, e):
         """Handle mouse enter - respect active navigation state"""
-        if self['state'] != 'disabled':
+        current_state = self.cget('state') if 'state' in self.keys() else 'normal'
+        if current_state != 'disabled':
             if self.is_nav_active:
                 # Active nav button: use slightly darker hover
                 self.config(bg=self.style_configs["primary"]["hover"])
@@ -161,7 +177,8 @@ class ModernButton(tk.Button):
 
     def _on_leave(self, e):
         """Handle mouse leave - restore correct state"""
-        if self['state'] != 'disabled':
+        current_state = self.cget('state') if 'state' in self.keys() else 'normal'
+        if current_state != 'disabled':
             if self.is_nav_active:
                 # Active nav button: return to primary color
                 self.config(bg=self.style_configs["primary"]["bg"])
