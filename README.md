@@ -107,10 +107,6 @@ The program will automatically fetch data from UniProt, ProtParam, and optionall
 - Check internet connection for database access
 - Some proteins may not have complete data available
 
-## Credits
-**Created by:** Matthew Hale  
-**UI Enhancements, Code refactoring:** Claude (Anthropic), ChatGPT (OpenAI), Gemini 2.5 (Google)
-
 ## License
 
 This project is licensed under the [MIT License](LICENSE), **with the following restriction**:
